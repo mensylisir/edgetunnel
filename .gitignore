@@ -35,6 +35,10 @@ wrangler-install.log
 .env.local
 .env.*.local
 
+# 多账号部署清单（含 API token，绝不入库）
+deploy-targets.json
+.deploy/
+
 # 日志文件
 *.log
 npm-debug.log*

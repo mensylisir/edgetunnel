@@ -255,6 +255,36 @@ curl -s "https://api.cloudflare.com/client/v4/accounts/<ACCOUNT_ID>/pages/projec
 
 **自动部署唯一的软肋**：`npm run mirror` 要从 `https://edt-pages.github.io` 拉面板。那个站点不可用时，工作流会在部署步骤之前失败，Pages 保留上一版、线上不受影响；但若在意“部署链路不碰别人”，把手动拖 zip 当主路径、Actions 当可选项。
 
+### 一次更新多个账号
+
+手上有多个 Cloudflare 账号、每个账号各跑一份时，用 `scripts/deploy-all.mjs` 一条命令推完：
+
+```bash
+cp deploy-targets.example.json deploy-targets.json   # 这个文件名已在 .gitignore 里
+# 填 accountId / project / token 或 tokenEnv
+npm run deploy:all -- --dry-run                      # 先校验配置
+npm run deploy:all                                   # 依次部署
+npm run deploy:all -- --only=主账号,备用-香港         # 只推其中几个
+```
+
+配置结构：
+
+```json
+[
+  { "name": "主账号",   "accountId": "a7e44774…", "project": "edt666", "tokenEnv": "CF_TOKEN_MAIN" },
+  { "name": "备用-香港", "accountId": "d1b2…",     "project": "edt-hk", "token": "cfut_…" }
+]
+```
+
+**token 的两种给法**：`tokenEnv` 指向环境变量（更安全，推荐）；或直接写 `token`。后者要求配置文件被 git 忽略——**脚本会检查这一点**，发现明文真 token 而文件未被忽略时直接拒绝执行（`--force` 可跳过，但不建议）。
+
+**安全约定**：一个账号一个 token，不要用一个能管全部账号的 token —— 那个泄漏了就是全部失守。每个只授 `Account → Cloudflare Pages → Edit`。
+
+**两个必须注意的点**：
+
+1. **`project` 必须和线上项目名逐字一致。** 写错不会「更新」，而是另建一个项目，域名和订阅地址都变——这是这套脚本唯一能造成实质损害的地方，所以先跑 `--dry-run` 对一遍名字。
+2. **脚本只换代码，不碰配置。** 环境变量（`ADMIN`、`PROXYIP`…）和 KV 绑定都是项目级的，部署不会改动它们；订阅地址因此也不变。
+
 ## 六之二、残余外部请求清单（实测，非估计）
 
 “零依赖”只对面板页面成立。整份程序跑起来仍然会访问下面这些地址，按能否替换分类：

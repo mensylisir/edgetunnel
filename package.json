@@ -12,10 +12,12 @@
     "mirror": "node scripts/mirror-panel.mjs",
     "embed": "node scripts/embed-panel.mjs",
     "pack": "node scripts/pack.mjs",
+    "deploy:all": "node scripts/deploy-all.mjs",
     "check:standalone": "node scripts/verify-standalone.mjs",
     "compat": "node scripts/compat-uuid.mjs",
     "compat:matrix": "node scripts/compat-matrix.mjs",
     "optimize": "node scripts/optimize.mjs",
+    "colo": "node scripts/colo-drift.mjs",
     "e2e:bestip": "node scripts/e2e-bestip.mjs",
     "verify": "npm run build && npm run check && npm test && npm run compat && npm run compat:matrix"
   },

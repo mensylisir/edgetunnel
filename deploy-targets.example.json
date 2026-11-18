@@ -1,0 +1,14 @@
+[
+  {
+    "name": "主账号",
+    "accountId": "a7e447743c7a4eafe3ff67f470955fa2",
+    "project": "edt666",
+    "tokenEnv": "CF_TOKEN_MAIN"
+  },
+  {
+    "name": "备用-香港",
+    "accountId": "REPLACE_WITH_32_HEX_ACCOUNT_ID",
+    "project": "edt-hk",
+    "token": "REPLACE_WITH_TOKEN_or_use_tokenEnv"
+  }
+]
