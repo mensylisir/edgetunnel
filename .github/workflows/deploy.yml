@@ -81,9 +81,10 @@ jobs:
         with:
           node-version: 22
 
-      # 全局装一次，多账号部署时不必每个都走 npx 解析
+      # 全局装一次，多账号部署时不必每个都走 npx 解析。
+      # 装失败也不终止：脚本检测不到全局 wrangler 时会自动回退到 npx。
       - name: 安装 wrangler
-        run: npm install -g wrangler@4
+        run: npm install -g wrangler@4 || echo "全局安装失败，部署时回退到 npx"
 
       - name: 取回构建产物
         uses: actions/download-artifact@v4
