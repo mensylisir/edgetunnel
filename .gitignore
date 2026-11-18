@@ -1,6 +1,8 @@
 # Demo 目录
 demo/
 tmp/
+.scratch/
+.Trash-*/
 .workbuddy/
 
 # 依赖包

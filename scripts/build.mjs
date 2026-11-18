@@ -77,6 +77,34 @@ if (!源码.includes(安全标记)) {
 	变更.push('注入会话令牌/HMAC 校验与登录限流', '收紧密码变量回退链', '引入 SECRET 变量', 'Cloudflare 凭证改为只读 KV');
 }
 
+// 后台面板是纯静态单页（约 1 MB HTML），上游托管在作者的 GitHub Pages 上。
+// 它所有数据请求都打回本 Worker 域名，所以换个宿主完全不影响功能 —— 只要把基址做成可配。
+// 设了 PAGES_URL 就能指向自己镜像的副本，断开这个单点依赖（作者改页/关站/被投毒都不再影响你）。
+const 静态页标记 = '静态页基址可配置（本 fork 新增）';
+if (!源码.includes(静态页标记)) {
+	const 定义位置 = 定位('const Pages静态页面 = ');
+	行.splice(
+		定义位置 + 1,
+		0,
+		'',
+		'// 静态页基址可配置（本 fork 新增）：设环境变量 PAGES_URL 指向自己镜像的后台面板，',
+		'// 留空则沿用上游默认地址，行为与上游一致。',
+		'function 静态页基址(env) {',
+		'\tconst 覆盖 = env && (env.PAGES_URL || env.静态页面);',
+		"\treturn 覆盖 ? String(覆盖).trim().replace(/\\/+$/, '') : Pages静态页面;",
+		'}'
+	);
+
+	let 引用数 = 0;
+	for (let 索引 = 0; 索引 < 行.length; 索引++) {
+		if (!行[索引].includes('Pages静态页面 +')) continue;
+		行[索引] = 行[索引].split('Pages静态页面 +').join('静态页基址(env) +');
+		引用数++;
+	}
+	if (引用数 !== 4) throw new Error(`静态页引用点数量异常：期望 4 处，实际 ${引用数} 处 —— 上游结构变了，请复核`);
+	变更.push(`后台面板基址支持 env.PAGES_URL 覆盖（改写 ${引用数} 处引用）`);
+}
+
 源码 = 行.join('\n');
 
 const 必备标记 = [
@@ -86,6 +114,7 @@ const 必备标记 = [
 	'登录失败上限',
 	'默认加密秘钥',
 	'env.SECRET || env.KEY',
+	'function 静态页基址',
 	"管理员密码 = env.ADMIN || env.admin || env.PASSWORD || env.password || env.pswd || env.TOKEN;",
 	'class TlsClient',
 	'socks5Connect',

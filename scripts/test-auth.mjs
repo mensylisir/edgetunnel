@@ -120,6 +120,19 @@ test('只配置 KEY 不配置 ADMIN 时不再把 KEY 当后台密码', async () 
 	assert.equal(响应.status, 404);
 });
 
+test('后台面板默认仍从上游静态页加载', async () => {
+	出站请求.length = 0;
+	await 执行(建环境(), 造请求('/login'));
+	assert.ok(出站请求.includes('https://edt-pages.github.io/login'), `实际出站：${出站请求.join(', ')}`);
+});
+
+test('设置 PAGES_URL 后后台面板改从自建副本加载（含末尾斜杠归一）', async () => {
+	出站请求.length = 0;
+	await 执行(建环境({ PAGES_URL: 'https://panel.example.com/' }), 造请求('/login'));
+	assert.ok(出站请求.includes('https://panel.example.com/login'), `实际出站：${出站请求.join(', ')}`);
+	assert.equal(出站请求.some((地址) => 地址.includes('edt-pages.github.io')), false);
+});
+
 test('查询请求量不再接受 URL 传参中的 Cloudflare 凭证', async () => {
 	const env = 建环境();
 	const Cookie = 取Cookie(await 登出(env, 管理员密码));

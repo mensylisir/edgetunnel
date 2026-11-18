@@ -39,7 +39,7 @@ const 代码标记 = ['class TlsClient', 'socks5Connect', 'turnConnect', 'sstpCo
 const 缺失代码 = 代码标记.filter((标记) => !源码.includes(标记));
 记录('核心逻辑完整', 缺失代码.length === 0, 缺失代码.length ? `缺少：${缺失代码.join('、')}` : `${代码标记.length} 个关键符号齐备`);
 
-const 补丁标记 = ['安全加固（本 fork 新增）', '恒定时间比较(', '生成会话令牌(', '校验会话令牌(', '登录失败上限', 'env.SECRET || env.KEY'];
+const 补丁标记 = ['安全加固（本 fork 新增）', '恒定时间比较(', '生成会话令牌(', '校验会话令牌(', '登录失败上限', 'env.SECRET || env.KEY', 'function 静态页基址'];
 const 缺失补丁 = 补丁标记.filter((标记) => !源码.includes(标记));
 记录('安全补丁在位', 缺失补丁.length === 0, 缺失补丁.length ? `缺少：${缺失补丁.join('、')}` : `${补丁标记.length} 个补丁标记齐备`);
 

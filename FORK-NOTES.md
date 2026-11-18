@@ -14,14 +14,16 @@
 | 后台密码来源 | `ADMIN / PASSWORD / pswd / TOKEN / KEY / UUID` 任一 | 仅 `ADMIN / PASSWORD / pswd / TOKEN`，不再把 `KEY`、`UUID` 当密码 |
 | 节点 UUID 密钥 | 只能用 `KEY`，缺失时用硬编码默认密钥 | 新增 `SECRET`，优先级高于 `KEY`；使用默认密钥时会打印告警 |
 | Cloudflare 凭证 | `/admin/getCloudflareUsage?GlobalAPIKey=...` 走 URL | 只读取 KV 中已保存的凭证，URL 传参直接返回 400 |
+| 后台面板来源 | 硬编码 `https://edt-pages.github.io`，无法更换 | 新增 `PAGES_URL`，可指向自己镜像的副本；未设置时行为与上游一致 |
 
 ## 二、环境变量
 
-原有变量不变，新增一个：
+原有变量不变，新增两个：
 
 | 变量 | 必填 | 说明 |
 | :--- | :---: | :--- |
 | `SECRET` | 建议 | 参与会话签名与节点 UUID 推导。设置后不再依赖硬编码默认密钥，`KEY` 的快速订阅路径语义保持不变 |
+| `PAGES_URL` | 可选 | 后台面板静态文件的托管地址（如 `https://你的面板.pages.dev`）。留空则用上游 `https://edt-pages.github.io`，行为不变 |
 
 ## 三、升级时要知道的兼容性变化
 
@@ -36,8 +38,9 @@
 ```bash
 npm run build    # 用上游 _worker.js 重新生成：去 BOM、去巨型注释、重新打安全补丁
 npm run check    # 结构 / 语法 / 补丁完整性 / 体积门禁
-npm test         # 认证行为测试（登录、限流、令牌伪造与过期、凭证不外带）
-npm run verify   # 以上三步串跑
+npm test         # 认证行为测试（登录、限流、令牌伪造与过期、凭证不外带、面板基址覆盖）
+npm run mirror   # 把后台面板四个静态页镜像到 dist/panel，供自建托管
+npm run verify   # 前三个串跑
 ```
 
 `_worker.js` 是构建产物，不要直接手改：手改的内容会在下一次 `npm run build` 时被覆盖。要改行为请改 `patches/` 下的片段或 `scripts/build.mjs` 的补丁逻辑。
@@ -46,7 +49,7 @@ npm run verify   # 以上三步串跑
 
 ## 五、没有“修复”的项，以及原因
 
-1. **第三方单点依赖**：默认反代 IP 指向作者域名，订阅转换走 `sub.cmliussss.net`，静态页走 `edt-pages.github.io`。这些是上游的运行设计，不在本仓库可控范围；可在 Cloudflare 环境变量里用 `PROXYIP`、`URL` 覆盖反代与伪装页，静态页与订阅转换无法替换（除非自行托管）。
+1. **第三方单点依赖**：默认反代 IP 指向作者域名，订阅转换走 `sub.cmliussss.net`。`PROXYIP`、`URL` 可覆盖前两者，订阅转换仍是硬依赖。**后台面板已可自建**（见第七节），`PAGES_URL` 一设就断开。
 2. **代码中的规避检测写法**（`特征码字典` 拼接隐藏仓库地址、域名拆写为 `SsSs.nEt`）：属于上游的对抗性设计，改动会破坏节点连通性，因此保留原状。
 3. **合规风险**：此类工具在 Cloudflare ToS 与所在地区法律下都有明确限制，README 的免责声明不构成授权。是否部署、部署在哪，由部署者自行承担。
 
@@ -54,3 +57,17 @@ npm run verify   # 以上三步串跑
 
 - Workers 免费版脚本上限 1 MiB（压缩后）；当前产物 gzip 约 76 KB，余量充足。
 - 必须绑定 KV（变量名 `KV`），并设置 `ADMIN`，否则只能看到 `noKV` / `noADMIN` 提示页。
+
+## 七、把后台面板搬到自己名下（可选）
+
+面板是**纯静态单页**：四个路由 `/admin/`、`/login/`、`/noADMIN/`、`/noKV/` 各一个 HTML 文件，由 GitHub Pages 托管（响应头 `server: GitHub.com`，前置 Fastly CDN），没有任何服务端逻辑。它所有的数据请求（`/admin/config.json`、`/admin/init`、`/version` …）都是站点根相对路径，由浏览器打回**你自己的 Worker 域名**，所以页面放哪儿都能用。
+
+为什么要搬：面板 JS 运行在你的后台域名下，能带着你的会话 Cookie 调 `/admin/init` 改写 KV 配置。作者若改动或投毒那个仓库，等于拿到你的面板控制权。搬走之后这条链路只剩你自己的托管。
+
+```bash
+npm run mirror                       # 拉四个页面到 dist/panel
+# 把 dist/panel 部署成一个静态站点（独立的 Cloudflare Pages 项目即可），
+# 再在上面的 Worker 里设 PAGES_URL = 那个站点地址
+```
+
+镜像目录结构就是站点根目录：`admin/index.html`、`login/index.html`、`noADMIN/index.html`、`noKV/index.html`。上游更新面板后重跑一次 `npm run mirror` 再重新部署即可。
