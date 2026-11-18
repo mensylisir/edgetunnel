@@ -130,15 +130,20 @@ function 从令牌表取(项) {
 	for (const 键 of [项.name, 项.project]) {
 		if (!键) continue;
 		const 值 = 令牌表[键];
-		if (typeof 值 === 'string' && 值.trim()) return 值.trim();
+		if (typeof 值 === 'string' && 值.trim()) return { 值: 值.trim(), 通配: false };
 	}
+	// "*" 通配：一个 token 覆盖全部目标。
+	// 仅当所有账号都在同一个 Cloudflare 登录下（令牌的 Account Resources 选了 All accounts）时才成立。
+	// 代价是这个 token 泄漏即全部失守，所以只在自用、且确实同属一个登录时用。
+	const 通配 = 令牌表['*'];
+	if (typeof 通配 === 'string' && 通配.trim()) return { 值: 通配.trim(), 通配: true };
 	return null;
 }
 
 function 解析令牌(项) {
 	if (令牌表) {
 		const 取到 = 从令牌表取(项);
-		if (取到) return { 值: 取到, 来源: 'CF_TOKENS' };
+		if (取到) return { 值: 取到.值, 来源: 取到.通配 ? 'CF_TOKENS[*] 通配' : 'CF_TOKENS' };
 	}
 	if (项.tokenEnv && process.env[项.tokenEnv]) {
 		return { 值: process.env[项.tokenEnv], 来源: `env:${项.tokenEnv}` };

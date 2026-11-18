@@ -298,6 +298,16 @@ npm run deploy:all -- --dry-run --check-tokens
 
 **加一个账号就三步**：往 `deploy-targets.json` 加一行 → 往 `CF_TOKENS` 加一个键 → push。别的一个都不用动，也不用新增 workflow。
 
+**12 个账号其实可能只需要 1 个 token**：建 token 时 Account Resources 选 `Include → All accounts`，这一个 token 就能推全你登录下的所有账号。这时 `CF_TOKENS` 只写一条通配：
+
+```json
+{ "*": "cfut_你的token" }
+```
+
+查找顺序是 `name` → `project` → `*`，所以想给某个账号单独换 token，照常加具名键就覆盖通配。
+
+成立的前提是那些账号**都在同一个 Cloudflare 登录下**（Dashboard 左侧账号切换器里能看到它们）。如果 12 个账号是 12 个独立邮箱登录，`All accounts` 只覆盖当前这一个登录，其余必须各自建 token。代价也要认：通配 token 泄漏即全部失守，所以只在自用时这么配。
+
 **只配了一部分令牌也能跑**：工作流里带 `--skip-missing`，没有令牌的账号会被列出来跳过，其余照常部署。想手动触发某几个，用 Actions 页面的 **Run workflow**，在 `only` 里填 name（逗号分隔）。
 
 **安全约定**：一个账号一个 token，不要用一个能管全部账号的 token —— 那个泄漏了就是全部失守。每个只授 `Account → Cloudflare Pages → Edit`。
