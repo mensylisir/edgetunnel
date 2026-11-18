@@ -1,7 +1,8 @@
 name: Deploy
 
 permissions:
-  contents: read
+  # package job 要把 zip 发到 Releases，需要写权限；其余步骤用不到
+  contents: write
 
 on:
   push:
@@ -93,6 +94,7 @@ jobs:
           path: dist/standalone
 
       - name: 校验部署清单
+        id: check
         env:
           CF_TOKENS: ${{ secrets.CF_TOKENS }}
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
@@ -100,12 +102,14 @@ jobs:
         run: |
           set -euo pipefail
           if [ -z "${CF_TOKENS:-}" ] && [ -z "${CLOUDFLARE_API_TOKEN:-}" ]; then
-            echo "::error::没有可用令牌。Settings → Secrets and variables → Actions 里添加 CF_TOKENS（推荐，一个 JSON 装全部账号），或只配单账号用的 CLOUDFLARE_API_TOKEN。详见 FORK-NOTES「一次更新多个账号」"
-            exit 1
+            echo "::warning::还没有配置部署令牌，本次只构建不部署。到 Settings → Secrets and variables → Actions 添加 CF_TOKENS（一个 JSON 装全部账号），然后重新运行本工作流即可。"
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+            exit 0
           fi
           node scripts/deploy-all.mjs --dry-run --skip-missing
 
       - name: 部署
+        if: steps.check.outputs.skip != 'true'
         env:
           CF_TOKENS: ${{ secrets.CF_TOKENS }}
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
@@ -118,3 +122,42 @@ jobs:
           else
             node scripts/deploy-all.mjs --skip-missing
           fi
+
+  # 把构建出的独立版打成 zip 发到 Releases，方便直接从 GitHub 下载真包，
+  # 不必再拖仓库里那份未内嵌面板的 _worker.js。
+  package:
+    name: 发布安装包到 Releases
+    needs: build
+    if: github.event_name == 'push'
+    runs-on: ubuntu-latest
+
+    steps:
+      # gh 命令需要在仓库目录里执行才能识别 repo
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: 取回构建产物
+        uses: actions/download-artifact@v4
+        with:
+          name: worker
+          path: pkg
+
+      - name: 打包
+        run: |
+          set -euo pipefail
+          cd pkg
+          zip -q -9 edgetunnel-standalone.zip _worker.js
+          ls -lh edgetunnel-standalone.zip
+
+      # 固定用 latest 这个 tag：下载地址永远是
+      # https://github.com/<owner>/<repo>/releases/latest/download/edgetunnel-standalone.zip
+      - name: 更新 latest Release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          gh release delete latest --yes --cleanup-tag 2>/dev/null || true
+          gh release create latest pkg/edgetunnel-standalone.zip \
+            --title "最新构建 · ${GITHUB_SHA:0:7}" \
+            --notes "由 commit ${GITHUB_SHA:0:7} 自动构建。包内根目录一个 \`_worker.js\`（面板已内嵌），拖进 Cloudflare Pages 的 Create deployment 即可。" \
+            --latest
