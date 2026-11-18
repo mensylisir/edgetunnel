@@ -10,15 +10,20 @@ on:
     paths-ignore:
       - "**.md"
   workflow_dispatch:
+    inputs:
+      only:
+        description: "只部署这些目标（填 deploy-targets.json 里的 name，逗号分隔；留空=全部）"
+        required: false
+        default: ""
 
-# 同一时间只允许一个部署，避免两次 push 交叉覆盖
+# 同一时间只允许一条部署流水线，避免两次 push 交叉覆盖
 concurrency:
   group: pages-production
   cancel-in-progress: false
 
 jobs:
-  deploy:
-    name: 构建并部署到 Cloudflare Pages（项目 edt666）
+  build:
+    name: 构建与验证
     runs-on: ubuntu-latest
 
     steps:
@@ -53,22 +58,62 @@ jobs:
           npm run mirror
           npm run embed
 
-      - name: 部署
+      - name: 上传产物
+        uses: actions/upload-artifact@v4
+        with:
+          name: worker
+          path: dist/standalone/_worker.js
+          retention-days: 3
+          if-no-files-found: error
+
+  deploy:
+    name: 部署到 Cloudflare Pages
+    needs: build
+    runs-on: ubuntu-latest
+
+    steps:
+      # 只读清单和脚本，不跑构建，所以不需要完整历史
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      # 全局装一次，多账号部署时不必每个都走 npx 解析
+      - name: 安装 wrangler
+        run: npm install -g wrangler@4
+
+      - name: 取回构建产物
+        uses: actions/download-artifact@v4
+        with:
+          name: worker
+          path: dist/standalone
+
+      - name: 校验部署清单
         env:
+          CF_TOKENS: ${{ secrets.CF_TOKENS }}
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
         run: |
           set -euo pipefail
-          if [ -z "${CLOUDFLARE_API_TOKEN:-}" ]; then
-            echo "::error::缺少 CLOUDFLARE_API_TOKEN。Settings → Secrets and variables → Actions 添加，权限只需 Account → Cloudflare Pages → Edit。详见 FORK-NOTES「自动部署」一节。"
+          if [ -z "${CF_TOKENS:-}" ] && [ -z "${CLOUDFLARE_API_TOKEN:-}" ]; then
+            echo "::error::没有可用令牌。Settings → Secrets and variables → Actions 里添加 CF_TOKENS（推荐，一个 JSON 装全部账号），或只配单账号用的 CLOUDFLARE_API_TOKEN。详见 FORK-NOTES「一次更新多个账号」"
             exit 1
           fi
-          # 在仓库外的干净目录部署：仓库根目录那份 wrangler.toml 是给 Workers 用的，
-          # 带着它跑 pages deploy 会引起配置误读。
-          OUT="$RUNNER_TEMP/out"
-          rm -rf "$OUT"
-          mkdir -p "$OUT"
-          cp dist/standalone/_worker.js "$OUT/"
-          cd "$OUT"
-          # 不带 --branch 即生产部署；项目名固定为 edt666，域名与订阅地址因此不变。
-          npx --yes wrangler@4 pages deploy . --project-name=edt666 --commit-dirty=true
+          node scripts/deploy-all.mjs --dry-run --skip-missing
+
+      - name: 部署
+        env:
+          CF_TOKENS: ${{ secrets.CF_TOKENS }}
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          ONLY: ${{ github.event.inputs.only }}
+        run: |
+          set -euo pipefail
+          if [ -n "${ONLY:-}" ]; then
+            node scripts/deploy-all.mjs --skip-missing --only="$ONLY"
+          else
+            node scripts/deploy-all.mjs --skip-missing
+          fi

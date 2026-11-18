@@ -35,8 +35,10 @@ wrangler-install.log
 .env.local
 .env.*.local
 
-# 多账号部署清单（含 API token，绝不入库）
-deploy-targets.json
+# 多账号部署清单：deploy-targets.json 只放 accountId/project，要提交入库；
+# 带 token 的本地私有清单用另一个名字，绝不入库
+deploy-targets.local.json
+deploy-targets.*.local.json
 .deploy/
 
 # 日志文件

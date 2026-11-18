@@ -229,21 +229,31 @@ npm run pack     # 打两个包：embed 生成独立版 → zip → 校验包内
 
 ⚠️ **必须进现有项目里点 Create deployment。** 从 Workers & Pages 首页点 “Create application → Pages → Upload assets” 会**新建一个项目**，域名变成新的 `xxx.pages.dev`，订阅地址也随之改变。
 
-**自动（GitHub Actions，`deploy.yml`）**
+**自动（GitHub Actions，`deploy.yml`）—— 推荐主路径**
 
-推送到 `main` 就跑：`build` → `check` → `npm test` → `compat` + `compat:matrix` → `mirror` + `embed` → `wrangler pages deploy` 到**同名项目 `edt666`**。域名和订阅地址都不变。
+推送到 `main` 就跑，本地什么都不用做。流水线分两个 job：
 
-需要两个 secret（GitHub 仓库 → Settings → Secrets and variables → Actions）：
+```
+build   构建 → 门禁 → 单测 → 订阅兼容性 → 镜像面板 + 内嵌 → 上传产物
+deploy  取回产物 → 按 deploy-targets.json 逐账号 wrangler pages deploy
+```
 
-| Secret | 值 / 权限 |
+分成两个 job 的好处是：构建只做一次（部署阶段不重复跑测试）；构建失败时部署根本不启动，线上保留上一版。旧版那种「一个账号一份 workflow」也不必了 —— 加账号只改一个 JSON，不用再来一个 secret 组合。
+
+**唯一必须配的东西**（GitHub 仓库 → Settings → Secrets and variables → Actions）：
+
+| Secret | 内容 |
 | :--- | :--- |
-| `CLOUDFLARE_API_TOKEN` | My Profile → API Tokens（`dash.cloudflare.com/profile/api-tokens`）→ Create Custom Token → 权限 `Account` + `Cloudflare Pages` + `Edit`，资源选该账户。**只显示一次**，建完立刻复制 |
-| `CLOUDFLARE_ACCOUNT_ID` | `a7e447743c7a4eafe3ff67f470955fa2`（Dashboard 右侧栏 Account ID；`710080675.workers.dev` 是 workers.dev 子域，跟这个无关） |
+| `CF_TOKENS` | **一个 JSON**，装全部账号的 token，见下节 |
+
+`CLOUDFLARE_API_TOKEN` + `CLOUDFLARE_ACCOUNT_ID` 仍然被支持，用于「只有一个账号」的老配置：脚本发现清单里某项的 `accountId` 与 `CLOUDFLARE_ACCOUNT_ID` 相同时，会用 `CLOUDFLARE_API_TOKEN` 推它。两个都配了的话 `CF_TOKENS` 优先。
+
+Token 怎么建：My Profile → API Tokens（`dash.cloudflare.com/profile/api-tokens`）→ **Create Custom Token** → 权限选 `Account` + `Cloudflare Pages` + `Edit`，资源选对应账户。**只显示一次**，建完立刻复制。
 
 推之前先在本地验证一次，省得 CI 跑完才发现权限不对：
 
 ```bash
-curl -s "https://api.cloudflare.com/client/v4/accounts/<ACCOUNT_ID>/pages/projects/edt666" \
+curl -s "https://api.cloudflare.com/client/v4/accounts/<ACCOUNT_ID>/pages/projects/<项目名>" \
   -H "Authorization: Bearer <API_TOKEN>" | head -c 300
 ```
 
@@ -255,35 +265,48 @@ curl -s "https://api.cloudflare.com/client/v4/accounts/<ACCOUNT_ID>/pages/projec
 
 **自动部署唯一的软肋**：`npm run mirror` 要从 `https://edt-pages.github.io` 拉面板。那个站点不可用时，工作流会在部署步骤之前失败，Pages 保留上一版、线上不受影响；但若在意“部署链路不碰别人”，把手动拖 zip 当主路径、Actions 当可选项。
 
-### 一次更新多个账号
+### 一次更新多个账号（清单入库，令牌进 secret）
 
-手上有多个 Cloudflare 账号、每个账号各跑一份时，用 `scripts/deploy-all.mjs` 一条命令推完：
-
-```bash
-cp deploy-targets.example.json deploy-targets.json   # 这个文件名已在 .gitignore 里
-# 填 accountId / project / token 或 tokenEnv
-npm run deploy:all -- --dry-run                      # 先校验配置
-npm run deploy:all                                   # 依次部署
-npm run deploy:all -- --only=主账号,备用-香港         # 只推其中几个
-```
-
-配置结构：
+`deploy-targets.json` **提交进仓库**，里面只有 `name / accountId / project`，没有任何凭证：
 
 ```json
 [
-  { "name": "主账号",   "accountId": "a7e44774…", "project": "edt666", "tokenEnv": "CF_TOKEN_MAIN" },
-  { "name": "备用-香港", "accountId": "d1b2…",     "project": "edt-hk", "token": "cfut_…" }
+  { "name": "edt666", "accountId": "a7e447743c7a4eafe3ff67f470955fa2", "project": "edt666" },
+  { "name": "hk",     "accountId": "d1b2…",  "project": "edt-hk" },
+  { "name": "jp",     "accountId": "e5f6…",  "project": "edt-jp" }
 ]
 ```
 
-**token 的两种给法**：`tokenEnv` 指向环境变量（更安全，推荐）；或直接写 `token`。后者要求配置文件被 git 忽略——**脚本会检查这一点**，发现明文真 token 而文件未被忽略时直接拒绝执行（`--force` 可跳过，但不建议）。
+令牌全部塞进一个 secret `CF_TOKENS`，键名用 `name`（找不到时再试 `project`，所以改名不必重配令牌）：
+
+```json
+{
+  "edt666": "cfut_xxx",
+  "hk": "cfut_yyy",
+  "jp": "cfut_zzz"
+}
+```
+
+**加一个账号就三步**：往 `deploy-targets.json` 加一行 → 往 `CF_TOKENS` 加一个键 → push。别的一个都不用动，也不用新增 workflow。
+
+**只配了一部分令牌也能跑**：工作流里带 `--skip-missing`，没有令牌的账号会被列出来跳过，其余照常部署。想手动触发某几个，用 Actions 页面的 **Run workflow**，在 `only` 里填 name（逗号分隔）。
 
 **安全约定**：一个账号一个 token，不要用一个能管全部账号的 token —— 那个泄漏了就是全部失守。每个只授 `Account → Cloudflare Pages → Edit`。
 
-**两个必须注意的点**：
+**三个必须注意的点**：
 
-1. **`project` 必须和线上项目名逐字一致。** 写错不会「更新」，而是另建一个项目，域名和订阅地址都变——这是这套脚本唯一能造成实质损害的地方，所以先跑 `--dry-run` 对一遍名字。
-2. **脚本只换代码，不碰配置。** 环境变量（`ADMIN`、`PROXYIP`…）和 KV 绑定都是项目级的，部署不会改动它们；订阅地址因此也不变。
+1. **`project` 必须和线上项目名逐字一致。** 写错不会「更新」，而是另建一个项目，域名和订阅地址都变——这是整套东西唯一能造成实质损害的地方。
+2. **只换代码，不碰配置。** 环境变量（`ADMIN`、`PROXYIP`…）和 KV 绑定都是项目级的，部署不会改动它们；订阅地址因此也不变。
+3. **`deploy-targets.json` 里永远不要写 token。** 脚本会 `git ls-files` 检查：文件已被跟踪且含明文 token 时直接拒绝执行（`--force` 可跳过，但不建议）。本地想存明文 token 就另存 `deploy-targets.local.json`（已被 `.gitignore` 忽略）。
+
+**本地没有 Actions、想手动推一次**（可选）：
+
+```bash
+CF_TOKENS='{"edt666":"cfut_xxx"}' npm run deploy:all -- --dry-run   # 先校验
+CF_TOKENS='{"edt666":"cfut_xxx"}' npm run deploy:all
+```
+
+`--only=hk,jp` 只推指定几项，`--file=别的.json` 换清单。需要先有 `dist/standalone/_worker.js`（`npm run embed`）。
 
 ## 六之二、残余外部请求清单（实测，非估计）
 
