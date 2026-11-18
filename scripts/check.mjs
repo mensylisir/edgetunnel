@@ -49,6 +49,30 @@ const 旧Cookie = 源码.includes('MD5MD5(UA + 加密秘钥 + 管理员密码)')
 const 密码回退 = /env\.TOKEN \|\| env\.KEY/.test(源码);
 记录('密码不再回退到 KEY/UUID', !密码回退, 密码回退 ? '仍存在 env.TOKEN || env.KEY' : '仅接受 ADMIN/PASSWORD/pswd/TOKEN');
 
+// 页面优选：内嵌的前端脚本必须和 patches/page-bestip.js 逐字节一致，否则改了源文件忘了同步，
+// 线上跑的还是旧逻辑。这个坑很隐蔽，所以放进硬门禁。
+const 前端文件 = join(根目录, 'patches', 'page-bestip.js');
+let 内嵌一致 = false, 内嵌说明 = '';
+try {
+	const 前端源码 = readFileSync(前端文件, 'utf8');
+	const 起 = 源码.indexOf('const 页面优选脚本 = String.raw`');
+	const 止 = 起 > -1 ? 源码.indexOf('\n`;', 起) : -1;
+	if (起 < 0 || 止 < 0) {
+		内嵌说明 = '_worker.js 里找不到内嵌脚本块';
+	} else {
+		const 内嵌 = 源码.slice(起 + 'const 页面优选脚本 = String.raw`'.length, 止).trim();
+		内嵌一致 = 内嵌 === 前端源码.trim();
+		内嵌说明 = 内嵌一致 ? '与 patches/page-bestip.js 一致' : '与源文件不一致，跑 npm run sync:bestip';
+	}
+} catch (错误) {
+	内嵌说明 = '读取 patches/page-bestip.js 失败：' + 错误.message;
+}
+记录('页面优选脚本已同步', 内嵌一致, 内嵌说明);
+
+const 优选标记 = ['function 生成候选地址(', 'async function 查地址归属(', 'async function 注入优选脚本(', "区分大小写访问路径 === 'admin/bestip.js'", "'admin/bestip/candidates'", "'admin/bestip/geo'", '注入优选脚本(await 取静态页(env, \'/admin\' + url.search))'];
+const 缺失优选 = 优选标记.filter((标记) => !源码.includes(标记));
+记录('页面优选接口齐全', 缺失优选.length === 0, 缺失优选.length ? `缺少：${缺失优选.join('、')}` : `${优选标记.length} 个接口与注入点齐备`);
+
 const 宽度 = Math.max(...结果.map((项) => 项.名称.length));
 for (const 项 of 结果) console.log(`${项.通过 ? '通过' : '失败'}  ${项.名称.padEnd(宽度, '　')}  ${项.说明}`);
 

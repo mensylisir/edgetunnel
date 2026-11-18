@@ -36,15 +36,17 @@
 ## 四、日常维护
 
 ```bash
-npm run build    # 用上游 _worker.js 重新生成：去 BOM、去巨型注释、重新打安全补丁
-npm run check    # 结构 / 语法 / 补丁完整性 / 体积门禁
-npm test         # 认证行为测试（登录、限流、令牌伪造与过期、凭证不外带、面板基址覆盖）
-npm run mirror   # 把后台面板四个静态页镜像到 dist/panel，供自建托管或内嵌
-npm run embed    # 把镜像好的面板内嵌进脚本，产出 dist/standalone/_worker.js 并自检
-npm run verify   # 前三个串跑
+npm run build        # 用上游 _worker.js 重新生成：去 BOM、去巨型注释、重新打安全补丁
+npm run check        # 结构 / 语法 / 补丁完整性 / 体积门禁 / 内嵌脚本一致性
+npm test             # 认证行为 + 页面优选接口（共 21 条：登录限流、令牌伪造、候选生成、归属缓存…）
+npm run sync:bestip  # 把 patches/page-bestip*.js 同步进 _worker.js（改了浮层脚本后必跑）
+npm run mirror       # 把后台面板四个静态页镜像到 dist/panel，供自建托管或内嵌
+npm run embed        # 把镜像好的面板内嵌进脚本，产出 dist/standalone/_worker.js 并自检
+npm run e2e:bestip   # 用真实 chromium 点开浮层、跑一次测速、写入订阅（需本机 chromium）
+npm run verify       # build + check + test 串跑
 ```
 
-`_worker.js` 是构建产物，不要直接手改：手改的内容会在下一次 `npm run build` 时被覆盖。要改行为请改 `patches/` 下的片段或 `scripts/build.mjs` 的补丁逻辑。
+`_worker.js` 是构建产物，不要直接手改：手改的内容会在下一次 `npm run build` 时被覆盖。要改行为请改 `patches/` 下的片段或 `scripts/build.mjs` 的补丁逻辑。唯一的例外是 `patches/` 里没有对应片段的功能（例如页面优选的路由），那部分直接写在 `_worker.js` 里，`build.mjs` 不会动它。
 
 **上游同步：已停止。** 本仓库自 v3 起自持分支，`.github/workflows/sync.yml` 已删除，不再每天拉取上游。`_worker.js` 现在是真正的主源，可以直接改；`scripts/build.mjs` 只在你想把补丁重新打到一份新的上游文件上时才用（它会跳过已打补丁的文件，不会覆盖手改内容）。`verify.yml` 仍会在每次推送时跑 `build` → `check` → `test` 作为门禁。
 
@@ -86,9 +88,44 @@ npm run embed    # 生成 dist/standalone/_worker.js，自检：内嵌命中 + �
 
 ## 八、按本机网络优选，并让订阅显示国家
 
+有两条路，**面板里那条是首选**（不用开终端），命令行那条留给批量/定时场景。
+
+### 8.1 在 `/admin` 页面里直接测（推荐）
+
+登录后台后，右下角有个 **⚡ 优选测速** 浮层按钮：
+
+1. 点开，填「候选 IP」（默认 60）、「端口」（默认 `443,2053,2083`）、「保留」（默认 10）；
+2. 点「开始测速」，浏览器会并发对每个 `IP:端口` 发一次 HTTPS 请求，约 10~20 秒出排名；
+3. 表格按延迟升序显示 `地址 / 国家·城市 / 延迟`，默认全勾选；
+4. 点「写入订阅」，它自动做两件事：把「随机IP」开关关掉、把勾选结果写进 `ADD.txt`，并回读校验。
+
+订阅备注随后变成 `188.114.99.51:2083#中国香港·430ms` 这种形式，客户端节点列表里直接能看到国家和延迟。
+
+**原理**（为什么浏览器能测出延迟）：请求 `https://IP:端口/` 时 SNI 是 IP，证书必然不匹配，但 TCP+TLS 握手已经跑完才会报错。这个「报错前的耗时」就是本机到该 IP 的真实 RTT；死 IP 则是一路超时，两者区分得开。已交叉验证：活 IP 报证书错耗时 395~537 ms，假 IP 6 s 超时，与 `curl --resolve` 的 `time_appconnect` 基本吻合。
+
+**接口**（都要求已登录，未登录一律 302 到 `/login`）：
+
+| 路径 | 作用 |
+| :--- | :--- |
+| `GET /admin/bestip.js` | 浮层脚本本体（由 `patches/page-bestip.js` 原样内嵌） |
+| `GET /admin/bestip/candidates?count=60&ports=443,2053` | 从内置 Cloudflare 官方网段等距取点生成候选 |
+| `GET /admin/bestip/geo?ips=a,b,c` | 批量查归属地（ip-api.com，最多 100 条/次，KV 缓存 7 天） |
+
+**浮层是怎么挂上去的**：`/admin` 返回 HTML 时由 `注入优选脚本()` 在 `</body>` 前插入一行 `<script src="/admin/bestip.js" defer>`。不改面板源码，所以面板将来更新也照样生效；`PAGES_URL` 自建面板、内嵌面板两种模式都适用。
+
+**改脚本的流程**：前端逻辑在 `patches/page-bestip.js`，Worker 侧在 `patches/page-bestip-worker.js`，改完跑 `npm run sync:bestip` 同步进 `_worker.js`。`npm run check` 会比对两边 sha256，忘了同步会直接报错。
+
+**这个功能的三个真实限制**：
+
+- **国家/城市取自 IP 归属地数据库，不是你实际落地的机房。** 任播网络下实际出口由你所在位置决定，同一个 IP 在别处连可能落到别的机房。要精确的落地机房，走 8.2 的命令行脚本（它能读 `colo`）。
+- **浏览器挂了代理，测出的耗时会含代理开销**，数值偏大。要测裸线路先关掉代理再测。
+- **候选可用率不高**（本机实测 60 个里通 14 个，约 23%）。任播大段里很多地址不被路由。可用数不够时把候选数调大重测，界面会提示。
+
 ### 为什么面板里的「随机优选」没有国家、也不快
 
 `生成随机IP()` 从 `CF-CIDR.txt`（兜底 `104.16.0.0/13`）里随机抽 IP、随机挑端口，备注直接拼 `${cfname}${序号}`，全程不测速、不查位置。而 `104.16.0.0/13` 是上百万个任播地址，随机抽样等价于瞎猜：抽到的 IP 在哪个机房落地，取决于**你的**网络怎么路由过去，跟 IP 本身无关。所以备注里的“1、2、3”只是编号，不是地区。
+
+### 8.2 命令行批量优选（备选，能拿到落地机房）
 
 ### 真正决定“节点在哪”的是落地机房
 

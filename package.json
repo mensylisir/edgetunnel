@@ -1,16 +1,18 @@
 {
   "name": "edgetunnel",
-  "version": "2.1.0",
+  "version": "2.2.0",
   "private": true,
   "type": "module",
-  "description": "edgetunnel 2.1 fork：清理冗余注释 + 后台认证加固",
+  "description": "edgetunnel 2.1 fork：清理冗余注释 + 后台认证加固 + 面板内本机测速优选",
   "scripts": {
     "build": "node scripts/build.mjs",
     "check": "node scripts/check.mjs",
-    "test": "node --test scripts/test-auth.mjs",
+    "test": "node --test scripts/test-auth.mjs scripts/test-bestip.mjs",
+    "sync:bestip": "node scripts/sync-bestip.mjs",
     "mirror": "node scripts/mirror-panel.mjs",
     "embed": "node scripts/embed-panel.mjs",
     "optimize": "node scripts/optimize.mjs",
+    "e2e:bestip": "node scripts/e2e-bestip.mjs",
     "verify": "npm run build && npm run check && npm test"
   },
   "devDependencies": {
