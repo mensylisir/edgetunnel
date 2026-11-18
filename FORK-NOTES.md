@@ -237,8 +237,17 @@ npm run pack     # 打两个包：embed 生成独立版 → zip → 校验包内
 
 | Secret | 值 / 权限 |
 | :--- | :--- |
-| `CLOUDFLARE_API_TOKEN` | My Profile → API Tokens → Create Token，权限只需 **Account → Cloudflare Pages → Edit** |
-| `CLOUDFLARE_ACCOUNT_ID` | `a7e447743c7a4eafe3ff67f470955fa2` |
+| `CLOUDFLARE_API_TOKEN` | My Profile → API Tokens（`dash.cloudflare.com/profile/api-tokens`）→ Create Custom Token → 权限 `Account` + `Cloudflare Pages` + `Edit`，资源选该账户。**只显示一次**，建完立刻复制 |
+| `CLOUDFLARE_ACCOUNT_ID` | `a7e447743c7a4eafe3ff67f470955fa2`（Dashboard 右侧栏 Account ID；`710080675.workers.dev` 是 workers.dev 子域，跟这个无关） |
+
+推之前先在本地验证一次，省得 CI 跑完才发现权限不对：
+
+```bash
+curl -s "https://api.cloudflare.com/client/v4/accounts/<ACCOUNT_ID>/pages/projects/edt666" \
+  -H "Authorization: Bearer <API_TOKEN>" | head -c 300
+```
+
+返回项目 JSON 说明 token 有 Pages 权限；返回 `Authentication error` 就是权限没给对（`/user/tokens/verify` 只能证明 token 有效，证明不了它有 Pages 权限）。
 
 **为什么不用 Dashboard 里的 “Connect to Git”**：Direct Upload 类型（拖 zip 创建）的 Pages 项目**不支持事后接入 Git**，官方明确只能新建项目再迁移。新建项目会换掉 `pages.dev` 域名；自定义域名 `edt2.myfreedog.de5.net` 虽然可以搬迁过去、订阅 token 也因此保住，但需要先解绑再绑定、中间有一段时间不可用，不值得为“自动”承担这个风险。用 Actions 推到同一项目，效果一样且不换域名。
 
