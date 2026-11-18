@@ -99,6 +99,21 @@ npm run compat:matrix   # 12 种环境变量组合逐个实测，任何组合下
 
 风控看的是出口 IP。它在变，目标站点就会判定“同一账号在多地登录”。
 
+**在哪里配** —— 面板默认把它折叠起来了，所以很容易找不到：`/admin` 页面往下找 **「🌐 Cloudflare CDN 访问设置」** 模块（标题带折叠箭头，默认收起，点一下展开）→ 「反代模式」下拉选 `PROXYIP` → 在 **「PROXYIP」** 输入框（占位符 `proxyip.cmliussss.net`）里填地址 → 取消「自动获取」勾选 → 保存。
+
+| 方式 | 位置 | 影响 |
+| :--- | :--- | :--- |
+| 环境变量（推荐） | Cloudflare → 项目 → Settings → Variables and Secrets，加 `PROXYIP` | 全局兜底，**不改订阅链接结构**，客户端不用重新导入 |
+| 面板 PROXYIP 输入框 | `/admin` → 展开「Cloudflare CDN 访问设置」→ 反代模式选 PROXYIP | 订阅生成时把 `proxyip=值` 拼进每个节点路径，**订阅内容会变**，要重新拉一次订阅 |
+
+**机场订阅不能直接当 `PROXYIP` 用**。`PROXYIP` 指向的是一个实现了 *proxyip 转发协议* 的服务（Worker 建连后直接把原始字节流交给它）；机场订阅里是 `vless://` / `ss://` / `trojan://` 节点，Worker 不会说这些协议，填进去只会连不通。唯一例外是机场额外提供了 **SOCKS5 接入**，那要走「反代模式 → 其他代理 → SOCKS5」，不是 PROXYIP。
+
+而且方向上也不合适：这类共享机场的 IP 被大量用户共用，早就被 Google / AI 服务标记成代理出口了，用它只会让风控更容易触发，跟你「要一个干净固定 IP」的目标正好相反。
+
+优先级：节点路径里的 `proxyip=` 参数 > 环境变量 `PROXYIP` > 默认 `${colo}.proxyip.cmliu.ssss.net`。只想固定出口又不想动订阅，用环境变量那条。
+
+**订阅里为什么会冒出十几个节点**：`ADD.txt` 里每个优选 IP 都会生成一条 `vless://` 链接，它们**全都是同一个 Worker 的不同入口**，不是十几个不同的代理。选中任意一个都能上网，因为后面走的是同一套出站；只有没设 `PROXYIP` 时，不同入口落到不同 `colo`，出口区域才会跟着变。
+
 **上游的行为**：`PROXYIP` 写多个时每次请求随机抽一个，出口 IP 每次都换 —— 这是最差的做法，写进去的其余地址也没参与选择。
 
 **本 fork 的行为**：全部候选下传，按健康度做**稳定排序**，并且是「粘住 + 故障才切」：
@@ -118,9 +133,51 @@ npm run compat:matrix   # 12 种环境变量组合逐个实测，任何组合下
 | 主要看视频、下载，偶尔断一下无所谓 | 填 3–5 个，主用挂了自动换 |
 | 完全不填 | 走 `${colo}.` 默认反代，出口随请求落到哪个机房而变，最不稳 |
 
+#### 面板下拉里那 18 个地区域名（实测，不是推测）
+
+别把它们当成“CF 的不同地区节点”，三种取值性质完全不同：
+
+| 填什么 | 解析到哪 | 谁在出网 |
+| :--- | :--- | :--- |
+| 留空 / `auto` | `${colo}.proxyip.cmliu.ssss.net` → 落在 CF 官方段（如 `172.64.0.0/13`） | Cloudflare 自家出口 |
+| `ProxyIP.CMLiussss.net`（无地区前缀） | `172.67.207.57`、`104.21.61.73` → 也在 CF 官方段 | Cloudflare 自家出口 |
+| `ProxyIP.HK / JP / SG / US / GB / DE …`（18 个地区） | **十几个到二十几个第三方 VPS，没有一个在 CF 官方段** | 别人的服务器 |
+
+实测样本（`dig` + ip-api 归属，2026-11）：HK 是 PCCW `219.76.13.169`、腾讯云 `43.154.131.189`、GCP `34.96.247.17`；JP 是 Oracle `140.238.50.134`、SAKURA `160.16.109.149`；SG 是 Zenlayer `128.1.186.114`、阿里 `43.133.61.219`、Vultr `45.77.33.228`；US/GB/DE 同样是 Oracle / OVH / IONOS / DigitalOcean 这类云主机。
+
+也就是说：**地区域名背后是一批公开中转池，不是 Cloudflare。** 这带来两个后果：
+
+1. **钉的是“地区”，不是“IP”。** 同一个域名一次返回 12–25 个 A 记录，且 DNS 会轮换（4 次查询出现 2 种不同结果串）。每次新建连接落到池里哪个 IP 由解析结果决定，本 fork 的“粘住”只能粘住域名，粘不住域名背后的 IP。
+2. **IP 更“脏”，不是更干净。** 这类公开池上跑的全是代理流量、几十人共用，被反滥用系统整体标记的概率高于 CF 默认出口（CF 出口混着海量正常 CDN 流量）。
+
+所以：**想降低风控，别用这 18 个地区域名；想稳定看到某国限定内容，可以用**（它比“CF 机房名叫 HK”更接近真实落地）。
+
 **必须说清的边界**：Cloudflare 的出口是**共享的数据中心 IP**。哪怕只填一个、固定不变，这个 IP 上也跑着别人的流量；Google 对数据中心 IP 段本来就更容易弹验证码，Claude 的服务条款也明确限制用代理规避地区——这些跟 IP 稳不稳是两回事。**要长期稳定登录这类服务，固定家宽或固定机房的 VPS 才是合适的工具，Worker 不适合。** 这里做的只是“别让它比必要的更糟”。
 
 **为什么不写 KV**：KV 免费版每天只有 1,000 次写，而健康状态是每次连接都可能变的，几小时就能写光；并且 KV 最终一致（最长 60 秒），拿它当实时健康状态在语义上就不成立。所以用 isolate 内的内存表：零成本、立即可见、不产生任何额外子请求。代价是 isolate 回收后记忆丢失，重新学几次连接即可。
+
+### 链式代理：把最后一跳钉在自己的中转上
+
+面板 `/admin` 里有一个**「链式代理」**页面（「添加链式代理节点」），它和 `PROXYIP` 是两条不同的路，但目的相同——决定出口 IP。区别很关键：
+
+| | 出口是谁 | 适合 |
+| :--- | :--- | :--- |
+| `PROXYIP` | Cloudflare 反代节点的出口，仍是 CF 段 IP | 只想让出口别漂 |
+| **链式代理** | **你填的那个中转服务器自己的出口** | 有 VPS，想要干净固定的 IP |
+
+**它怎么工作**：添加节点时填 `协议 + 主机 + 端口`（支持 `socks5 / http / https / turn / sstp`），面板会先调 `/admin/check` 实际连一次、经代理访问 `cloudflare.com/cdn-cgi/trace`，把**落地 IP、地区、延迟**回显出来。验证通过后，这个节点的路径会被改写成 `/video/<加密后的中转信息>`，Worker 收到请求就按里面的地址出站。
+
+所以完整链路是：**客户端 → 优选 IP（入口）→ Worker → 你的中转 → 目标**，出口 = 中转的出口。这就是「最后一跳固定」的正解，比 `PROXYIP` 更彻底，因为它可以不是 CF 的 IP。
+
+**三条必须注意**：
+
+1. **和 `PROXYIP` / `SOCKS5` 互斥**。建连是 if/else 链，链式代理命中 `/video/` 后直接走中转，`PROXYIP` 不再参与。配了链式就别指望 `PROXYIP` 兜底。
+2. **「公开代理库」里的是别人的机器**，随时会挂，也可能记录你的流量。只适合临时试，长期用一定要填自己可控的中转。
+3. **只支持单跳**。中转之后直接到目标，不支持「A → B → C」串联。Workers 的建连超时和 CPU 预算也不允许叠太多跳。
+4. **中转上要跑的是 SOCKS5 / HTTP，不是 VLESS**。链式代理只在出口这一跳工作，它不认识 VLESS 握手 —— 装了 `x-ui` 之类只开 VLESS 的，填进去同样连不通。起一个最简 SOCKS5 就够：`gost -L "socks5://用户名:密码@:1080"`。
+5. **别把 VPS 填进 `PROXYIP` 输入框**。`PROXYIP` 要的是 proxyip 转发服务，普通 SOCKS5 与之协议不通。自己的服务器走「链式代理」这条路。
+
+> 面板里那张「链路预览」（入口 → 落地地址）就是你实际走的路径，配完可以对照 `https://ip.sb` 显示的 IP 验证是否一致。
 
 ## 四、日常维护
 
@@ -161,6 +218,33 @@ npm run pack     # 打两个包：embed 生成独立版 → zip → 校验包内
 | `dist/edgetunnel-panel.zip` | 253 KB | 自建静态站，供 `PAGES_URL` 指向 | 想自己托管面板但又不愿把 1.5 MB 塞进脚本 |
 
 三个包内都是根目录一个 `_worker.js`，Pages 的“上传资产”直接认。
+
+### 更新线上部署（Cloudflare Pages）
+
+**手动（推荐作为主路径）**
+
+1. Dashboard → Workers & Pages → 点进 **`edt666`** 这个项目 → **Deployments** → **Create deployment**
+2. 把 `dist/edgetunnel-standalone.zip` 拖进去。包内根目录就是 `_worker.js`，不用填构建命令和输出目录
+3. 部署完成后重新登录一次 `/admin`（会话签名密钥变了）
+
+⚠️ **必须进现有项目里点 Create deployment。** 从 Workers & Pages 首页点 “Create application → Pages → Upload assets” 会**新建一个项目**，域名变成新的 `xxx.pages.dev`，订阅地址也随之改变。
+
+**自动（GitHub Actions，`deploy.yml`）**
+
+推送到 `main` 就跑：`build` → `check` → `npm test` → `compat` + `compat:matrix` → `mirror` + `embed` → `wrangler pages deploy` 到**同名项目 `edt666`**。域名和订阅地址都不变。
+
+需要两个 secret（GitHub 仓库 → Settings → Secrets and variables → Actions）：
+
+| Secret | 值 / 权限 |
+| :--- | :--- |
+| `CLOUDFLARE_API_TOKEN` | My Profile → API Tokens → Create Token，权限只需 **Account → Cloudflare Pages → Edit** |
+| `CLOUDFLARE_ACCOUNT_ID` | `a7e447743c7a4eafe3ff67f470955fa2` |
+
+**为什么不用 Dashboard 里的 “Connect to Git”**：Direct Upload 类型（拖 zip 创建）的 Pages 项目**不支持事后接入 Git**，官方明确只能新建项目再迁移。新建项目会换掉 `pages.dev` 域名；自定义域名 `edt2.myfreedog.de5.net` 虽然可以搬迁过去、订阅 token 也因此保住，但需要先解绑再绑定、中间有一段时间不可用，不值得为“自动”承担这个风险。用 Actions 推到同一项目，效果一样且不换域名。
+
+**已实测可复现**（在干净 clone 里跑完整链路）：`build` 逐字节复现已提交的 `_worker.js`；`mirror` + `embed` 的产物与本地打包的 sha256 同为 `19249c46…`。所以 CI 不会悄悄改线上代码。
+
+**自动部署唯一的软肋**：`npm run mirror` 要从 `https://edt-pages.github.io` 拉面板。那个站点不可用时，工作流会在部署步骤之前失败，Pages 保留上一版、线上不受影响；但若在意“部署链路不碰别人”，把手动拖 zip 当主路径、Actions 当可选项。
 
 ## 六之二、残余外部请求清单（实测，非估计）
 

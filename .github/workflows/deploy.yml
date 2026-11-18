@@ -1,0 +1,74 @@
+name: Deploy
+
+permissions:
+  contents: read
+
+on:
+  push:
+    branches:
+      - main
+    paths-ignore:
+      - "**.md"
+  workflow_dispatch:
+
+# 同一时间只允许一个部署，避免两次 push 交叉覆盖
+concurrency:
+  group: pages-production
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    name: 构建并部署到 Cloudflare Pages（项目 edt666）
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          # build 要 git show 上游提交 5b2aaf0:_worker.js，兼容性测试也要完整历史
+          fetch-depth: 0
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: 从上游 blob 重建并打补丁
+        run: npm run build
+
+      - name: 门禁与单测
+        run: |
+          npm run check
+          npm test
+
+      - name: 订阅地址兼容性（上游原版 A/B + 变量组合矩阵）
+        run: |
+          npm run compat
+          npm run compat:matrix
+
+      # 面板镜像与内嵌依赖外部站点 https://edt-pages.github.io。
+      # 它不可用时会在这里失败，后面的部署不会执行，线上保留上一版。
+      - name: 镜像面板并内嵌为独立版
+        run: |
+          npm run mirror
+          npm run embed
+
+      - name: 部署
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: |
+          set -euo pipefail
+          if [ -z "${CLOUDFLARE_API_TOKEN:-}" ]; then
+            echo "::error::缺少 CLOUDFLARE_API_TOKEN。Settings → Secrets and variables → Actions 添加，权限只需 Account → Cloudflare Pages → Edit。详见 FORK-NOTES「自动部署」一节。"
+            exit 1
+          fi
+          # 在仓库外的干净目录部署：仓库根目录那份 wrangler.toml 是给 Workers 用的，
+          # 带着它跑 pages deploy 会引起配置误读。
+          OUT="$RUNNER_TEMP/out"
+          rm -rf "$OUT"
+          mkdir -p "$OUT"
+          cp dist/standalone/_worker.js "$OUT/"
+          cd "$OUT"
+          # 不带 --branch 即生产部署；项目名固定为 edt666，域名与订阅地址因此不变。
+          npx --yes wrangler@4 pages deploy . --project-name=edt666 --commit-dirty=true
