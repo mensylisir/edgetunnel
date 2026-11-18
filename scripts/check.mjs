@@ -54,6 +54,32 @@ const 保留KEY回退 = /\|\| env\.KEY \|\|/.test(密码链);
 const UUID直连密码 = /\|\| env\.(UUID|uuid)\b/.test(密码链) && !密码链.includes('仅UUID占位');
 记录('UUID 原文不当后台密码', !UUID直连密码, UUID直连密码 ? 'env.UUID 是公开值，出现在每个节点链接里' : '仅作非空占位，用随机不可猜值代替');
 
+// PROXYIP 健康记忆同样要求逐字节一致：改了 patches/proxy-health.js 忘了重新注入，
+// 线上跑的还是旧策略（随机/轮转），而出口 IP 漂移正是这里要防的。
+let 健康一致 = false, 健康说明 = '';
+try {
+	const 健康补丁 = readFileSync(join(根目录, 'patches', 'proxy-health.js'), 'utf8');
+	const 起 = 源码.indexOf('// >>> PROXYIP 健康记忆');
+	const 止 = 源码.indexOf('// <<< PROXYIP 健康记忆');
+	const 补丁起 = 健康补丁.indexOf('// >>> PROXYIP 健康记忆');
+	const 补丁止 = 健康补丁.indexOf('// <<< PROXYIP 健康记忆');
+	if (起 < 0 || 止 < 0 || 补丁起 < 0 || 补丁止 < 0) {
+		健康说明 = '找不到 PROXYIP 健康记忆模块标记';
+	} else {
+		健康一致 = 源码.slice(起, 止) === 健康补丁.slice(补丁起, 补丁止);
+		健康说明 = 健康一致 ? '与 patches/proxy-health.js 一致' : '与 patches/proxy-health.js 不一致，需重新注入';
+	}
+} catch (错误) {
+	健康说明 = '读取 patches/proxy-health.js 失败：' + 错误.message;
+}
+记录('PROXYIP 健康策略已同步', 健康一致, 健康说明);
+
+// 出口 IP 稳定性：多候选必须是「粘住 + 故障才切」，不能是随机或轮转
+const 反代随机 = /proxyIPs\[Math\.floor\(Math\.random\(\) \* proxyIPs\.length\)\]/.test(源码);
+记录('PROXYIP 全量候选', !反代随机, 反代随机 ? '仍在随机取一个，其余地址不参与选择' : '全部候选下传，由健康排序挑选');
+const 反代轮转 = 源码.includes('(反代数组索引 + i + j)');
+记录('出口 IP 不轮转', !反代轮转, 反代轮转 ? '仍按索引轮转，出口 IP 会在候选间漂移' : '粘住优先，连续失败才切换');
+
 // 页面优选：内嵌的前端脚本必须和 patches/page-bestip.js 逐字节一致，否则改了源文件忘了同步，
 // 线上跑的还是旧逻辑。这个坑很隐蔽，所以放进硬门禁。
 const 前端文件 = join(根目录, 'patches', 'page-bestip.js');

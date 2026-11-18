@@ -80,7 +80,47 @@ if (!源码.includes(安全标记)) {
 	const 用量尾 = 定位("} else if (区分大小写访问路径 === 'admin/getADDAPI')", 用量头);
 	行.splice(用量头, 用量尾 - 用量头, ...读取片段('usage-route.txt'));
 
-	变更.push('注入会话令牌/HMAC 校验与登录限流', '收紧密码变量回退链', '引入 SECRET 变量', 'Cloudflare 凭证改为只读 KV');
+	// PROXYIP 写多个地址时不能随机取一个：随机 = 每次请求换出口 IP，目标站点会当成异地登录。
+	// 全量传下去，由 connectProxyIP 按健康度稳定排序后粘住一个，连续失败才切。
+	const 反代起始 = 定位('const proxyIPs = await 整理成数组(env.PROXYIP)');
+	const 反代结束 = 定位('默认反代兜底 = false;', 反代起始);
+	行.splice(反代起始, 反代结束 - 反代起始 + 1,
+		'\t\t\tconst proxyIPs = (await 整理成数组(env.PROXYIP)).filter(Boolean);',
+		'\t\t\tif (proxyIPs.length) {',
+		'\t\t\t\t// 不能只随机取一个：解析地址端口 + connectProxyIP 本来就支持「多候选遍历 + 并发拨号 + 失败换下一个」，',
+		'\t\t\t\t// 只取一个等于把这份能力废掉，PROXYIP 里写的其余地址根本不参与选择。',
+		'\t\t\t\t// 全部传下去，让 connectProxyIP 按健康度排序后自己挑。',
+		"\t\t\t\t默认反代IP = proxyIPs.join(',');",
+		'\t\t\t\t默认反代兜底 = false;',
+		'\t\t\t}'
+	);
+
+	// 健康记忆模块：插到 log() 之后，供 connectProxyIP 排序与记账使用
+	const 日志头 = 定位('function log(...args)');
+	let 日志尾 = 日志头;
+	while (日志尾 < 行.length && 行[日志尾].trim() !== '}') 日志尾++;
+	行.splice(日志尾 + 1, 0, '', ...读取片段('proxy-health.js'));
+
+	// connectProxyIP 接入健康排序：不再按索引轮转（轮转 = 出口 IP 漂移）
+	替换行('let 反代数组索引 = 0;', []);
+	替换行('if (所有反代数组 && 所有反代数组.length > 0) {', [
+		'\t\t\tif (所有反代数组 && 所有反代数组.length > 0) {',
+		'\t\t\t\t// 按健康度做稳定排序：粘住的排第一，冷却的排最后，其余保持配置顺序。',
+		'\t\t\t\t所有反代数组 = 按健康排序反代候选(所有反代数组);'
+	]);
+	替换行('const 索引 = (反代数组索引 + i + j) % 所有反代数组.length;', [
+		'\t\t\t\t\tconst 索引 = (i + j) % 所有反代数组.length;'
+	]);
+	替换行('反代数组索引 = candidate.index;', [
+		'\t\t\t\t\t标记反代成功(candidate.hostname, candidate.port);'
+	]);
+	替换行('log(`[反代连接] 本批连接失败: ${err.message || err}`);', [
+		'\t\t\t\t\t// 整批都失败才记失败：并发时落败的候选是被主动关掉的，不算它不可用',
+		'\t\t\t\t\tfor (const 候选 of 候选列表) 标记反代失败(候选.hostname, 候选.port);',
+		'\t\t\t\t\tlog(`[反代连接] 本批连接失败: ${err.message || err}`);'
+	]);
+
+	变更.push('注入会话令牌/HMAC 校验与登录限流', '收紧密码变量回退链', '引入 SECRET 变量', 'Cloudflare 凭证改为只读 KV', 'PROXYIP 全量候选 + 粘性健康记忆');
 }
 
 // 后台面板是纯静态单页（约 1 MB HTML），上游托管在作者的 GitHub Pages 上。
@@ -151,6 +191,9 @@ const 必备标记 = [
 	'env.SECRET || env.KEY',
 	'function 静态页基址',
 	'env.TOKEN || env.KEY ||',
+	"默认反代IP = proxyIPs.join(',')",
+	'按健康排序反代候选(',
+	'标记反代成功(',
 	'class TlsClient',
 	'socks5Connect',
 	'turnConnect',

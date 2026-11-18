@@ -768,9 +768,14 @@ export default {
 		if (!env.TCP_CONCURRENT_DIAL && TCP并发拨号数 !== 1 && 识别运营商(request) === 'cmcc') TCP并发拨号数 = 1;
 		let 默认反代IP = (`${request.cf.colo}.${特征码字典[0]}.${特征码字典[1]}SsSs.nEt`).toLowerCase(), 默认反代兜底 = true;
 		if (env.PROXYIP) {
-			const proxyIPs = await 整理成数组(env.PROXYIP);
-			默认反代IP = proxyIPs[Math.floor(Math.random() * proxyIPs.length)];
-			默认反代兜底 = false;
+			const proxyIPs = (await 整理成数组(env.PROXYIP)).filter(Boolean);
+			if (proxyIPs.length) {
+				// 不能只随机取一个：解析地址端口 + connectProxyIP 本来就支持「多候选遍历 + 并发拨号 + 失败换下一个」，
+				// 只取一个等于把这份能力废掉，PROXYIP 里写的其余地址根本不参与选择。
+				// 全部传下去，让 connectProxyIP 按健康度排序后自己挑。
+				默认反代IP = proxyIPs.join(',');
+				默认反代兜底 = false;
+			}
 		};
 		const 访问IP = request.headers.get('CF-Connecting-IP') || request.headers.get('True-Client-IP') || request.headers.get('X-Real-IP') || request.headers.get('X-Forwarded-For') || request.headers.get('Fly-Client-IP') || request.headers.get('X-Appengine-Remote-Addr') || request.headers.get('X-Cluster-Client-IP') || '未知IP';
 		const [本机标识头, 本机标识键] = 获取本机标识(userID);
@@ -2909,7 +2914,6 @@ async function forwardataTCP(host, portNum, rawData, ws, respHeader, remoteConnW
 	const ctx代理全局 = 反代上下文.代理全局 !== undefined ? 反代上下文.代理全局 : false;
 	const ctx代理参数 = 反代上下文.代理参数 || {};
 	const ctx反代兜底 = 反代上下文.反代兜底 !== undefined ? 反代上下文.反代兜底 : true;
-	let 反代数组索引 = 0;
 	log(`[TCP转发] 目标: ${host}:${portNum} | 反代IP: ${ctx反代IP} | 反代兜底: ${ctx反代兜底 ? '是' : '否'} | 反代类型: ${ctx代理类型 || 'proxyip'} | 全局: ${ctx代理全局 ? '是' : '否'}`);
 	const 连接超时毫秒 = 1000;
 	let 已通过代理发送首包 = false;
@@ -3054,11 +3058,13 @@ async function forwardataTCP(host, portNum, rawData, ws, respHeader, remoteConnW
 
 	async function connectProxyIP(address, port, data = null, 所有反代数组 = null, 启用反代失败兜底 = true) {
 		if (所有反代数组 && 所有反代数组.length > 0) {
+			// 按健康度做稳定排序：粘住的排第一，冷却的排最后，其余保持配置顺序。
+			所有反代数组 = 按健康排序反代候选(所有反代数组);
 			const 实际并发数 = Math.max(1, Math.floor(Number(反代并发拨号数) || 1));
 			for (let i = 0; i < 所有反代数组.length; i += 实际并发数) {
 				const 候选列表 = [];
 				for (let j = 0; j < 实际并发数 && i + j < 所有反代数组.length; j++) {
-					const 索引 = (反代数组索引 + i + j) % 所有反代数组.length;
+					const 索引 = (i + j) % 所有反代数组.length;
 					const [反代地址, 反代端口] = 所有反代数组[索引];
 					候选列表.push({ hostname: 反代地址, port: 反代端口, index: 索引 });
 				}
@@ -3070,10 +3076,12 @@ async function forwardataTCP(host, portNum, rawData, ws, respHeader, remoteConnW
 					candidate = 连接结果.candidate;
 					await 写入首包(socket, data);
 					log(`[反代连接] 成功连接到: ${candidate.hostname}:${candidate.port} (索引: ${candidate.index})`);
-					反代数组索引 = candidate.index;
+					标记反代成功(candidate.hostname, candidate.port);
 					return socket;
 				} catch (err) {
 					try { socket?.close?.() } catch (e) { }
+					// 整批都失败才记失败：并发时落败的候选是被主动关掉的，不算它不可用
+					for (const 候选 of 候选列表) 标记反代失败(候选.hostname, 候选.port);
 					log(`[反代连接] 本批连接失败: ${err.message || err}`);
 				}
 			}
@@ -5554,6 +5562,62 @@ function 获取传输路径参数值(配置 = {}, 节点路径 = '/', 作为优�
 function log(...args) {
 	if (调试日志打印) console.log(...args);
 }
+
+// >>> PROXYIP 健康记忆（isolate 内，跨请求复用）
+// 目标不是「轮换提高可用率」，而是「让出口 IP 尽量不变」——目标网站看到的是反代 IP 的出口，
+// 出口一直在变会触发 Google / AI 服务这类站点的异地登录风控。所以策略是「粘住 + 故障才切」：
+//   1. 只用「粘住的候选」，成功一次就粘 10 分钟，期间即使有别的候选也不会主动换；
+//   2. 连续失败 2 次才冷却，单次偶发超时只记数、不换 IP，避免来回横跳；
+//   3. 冷却中的排到最后但仍保留——全都挂了还得挨个试。
+// 不写 KV：免费版每天只有 1000 次写，且 KV 最终一致（最长 60 秒），拿它当实时健康状态语义不成立。
+const 反代健康表 = new Map();
+const 反代健康表上限 = 512;
+const 反代冷却毫秒 = 5 * 60 * 1000;
+const 反代粘住毫秒 = 10 * 60 * 1000;
+let 反代粘住键 = '', 反代粘住到 = 0;
+
+function 反代候选键(地址, 端口) {
+	return String(地址 || '').toLowerCase() + ':' + Number(端口);
+}
+
+function 反代冷却中(地址, 端口) {
+	const 记录 = 反代健康表.get(反代候选键(地址, 端口));
+	return !!记录 && 记录.冷却到 > Date.now();
+}
+
+function 标记反代成功(地址, 端口) {
+	const 键 = 反代候选键(地址, 端口);
+	反代健康表.delete(键);
+	反代健康表.set(键, { 冷却到: 0, 连续失败: 0 });
+	反代粘住键 = 键;
+	反代粘住到 = Date.now() + 反代粘住毫秒;
+	if (反代健康表.size > 反代健康表上限) 反代健康表.delete(反代健康表.keys().next().value);
+}
+
+function 标记反代失败(地址, 端口) {
+	const 键 = 反代候选键(地址, 端口);
+	const 连续失败 = (反代健康表.get(键)?.连续失败 || 0) + 1;
+	反代健康表.delete(键);
+	反代健康表.set(键, { 冷却到: 连续失败 >= 2 ? Date.now() + 反代冷却毫秒 : 0, 连续失败 });
+	if (连续失败 >= 2 && 反代粘住键 === 键) 反代粘住键 = '';
+	if (反代健康表.size > 反代健康表上限) 反代健康表.delete(反代健康表.keys().next().value);
+}
+
+// 稳定排序：粘住的第一 → 其余健康按原配置顺序 → 冷却的最后。
+// 同一份配置每次排出来的顺序必须一致，否则出口 IP 就在候选之间漂。
+function 按健康排序反代候选(候选数组) {
+	if (!Array.isArray(候选数组) || 候选数组.length < 2) return 候选数组;
+	const 粘住 = [], 健康 = [], 冷却 = [];
+	const 现在 = Date.now();
+	for (const 候选 of 候选数组) {
+		const 键 = 反代候选键(候选[0], 候选[1]);
+		if (反代冷却中(候选[0], 候选[1])) 冷却.push(候选);
+		else if (键 === 反代粘住键 && 反代粘住到 > 现在) 粘住.push(候选);
+		else 健康.push(候选);
+	}
+	return 粘住.concat(健康, 冷却);
+}
+// <<< PROXYIP 健康记忆
 
 function Clash订阅配置文件热补丁(Clash_原始订阅内容, config_JSON = {}) {
 	const uuid = config_JSON?.UUID || null;

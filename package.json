@@ -7,7 +7,7 @@
   "scripts": {
     "build": "node scripts/build.mjs",
     "check": "node scripts/check.mjs",
-    "test": "node --test scripts/test-auth.mjs scripts/test-bestip.mjs",
+    "test": "node --test scripts/test-auth.mjs scripts/test-bestip.mjs scripts/test-proxyip.mjs",
     "sync:bestip": "node scripts/sync-bestip.mjs",
     "mirror": "node scripts/mirror-panel.mjs",
     "embed": "node scripts/embed-panel.mjs",
