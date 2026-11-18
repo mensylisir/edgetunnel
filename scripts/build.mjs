@@ -45,8 +45,14 @@ if (!源码.includes(安全标记)) {
 		行.splice(位置, 1, ...新行);
 	};
 
+	// 密码链必须与上游逐项对齐，否则老部署的 UUID 会变、订阅地址跟着变：
+	//   · 少了 env.KEY 回退 → 「只设 KEY」的部署 UUID 从 MD5MD5(KEY+KEY) 变成 MD5MD5("undefined"+KEY)，地址直接变
+	//   · 少了 env.UUID 回退 → 「只设 UUID」的部署被判成未配置 ADMIN，/sub 返回 404，订阅直接断
+	// env.UUID 是公开值（每个节点链接里都有），不能当登录密码用，所以合法 UUID 只做「非空占位」，
+	// 用随机不可猜值代替原值：订阅照常、地址不变，但后台无法用 UUID 撞进来，需补设 ADMIN 才可登录。
 	替换行('const 管理员密码 = env.ADMIN', [
-		"\t\tconst 管理员密码 = env.ADMIN || env.admin || env.PASSWORD || env.password || env.pswd || env.TOKEN;"
+		"\t\tconst 环境UUID占位 = env.UUID || env.uuid;",
+		"\t\tconst 管理员密码 = env.ADMIN || env.admin || env.PASSWORD || env.password || env.pswd || env.TOKEN || env.KEY || (环境UUID占位 && /^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-4[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$/.test(环境UUID占位) ? '仅UUID占位-' + crypto.randomUUID() : 环境UUID占位);"
 	]);
 	替换行('const 加密秘钥 = env.KEY ||', [
 		"\t\tconst 加密秘钥 = env.SECRET || env.KEY || 默认加密秘钥;",
@@ -144,7 +150,7 @@ const 必备标记 = [
 	'默认加密秘钥',
 	'env.SECRET || env.KEY',
 	'function 静态页基址',
-	"管理员密码 = env.ADMIN || env.admin || env.PASSWORD || env.password || env.pswd || env.TOKEN;",
+	'env.TOKEN || env.KEY ||',
 	'class TlsClient',
 	'socks5Connect',
 	'turnConnect',

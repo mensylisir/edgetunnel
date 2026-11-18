@@ -46,8 +46,13 @@ const 缺失补丁 = 补丁标记.filter((标记) => !源码.includes(标记));
 const 旧Cookie = 源码.includes('MD5MD5(UA + 加密秘钥 + 管理员密码)');
 记录('旧静态 Cookie 已移除', !旧Cookie, 旧Cookie ? '仍存在 MD5(UA+KEY+ADMIN) 会话判定' : '已全部改为 HMAC 令牌校验');
 
-const 密码回退 = /env\.TOKEN \|\| env\.KEY/.test(源码);
-记录('密码不再回退到 KEY/UUID', !密码回退, 密码回退 ? '仍存在 env.TOKEN || env.KEY' : '仅接受 ADMIN/PASSWORD/pswd/TOKEN');
+// 密码链决定 UUID，UUID 决定 token，token 就是订阅地址。所以这里必须和上游逐项对齐：
+// 少一项回退，只设那一项的老部署更新后订阅地址就会变（或缺 ADMIN 判定导致 404）。
+const 密码链 = (源码.match(/\|\| env\.TOKEN \|\|[^\n]*/) || [''])[0];
+const 保留KEY回退 = /\|\| env\.KEY \|\|/.test(密码链);
+记录('密码链保留 KEY 回退', 保留KEY回退, 保留KEY回退 ? '只设 KEY 的老部署 UUID 不变' : '缺少 env.KEY 回退，只设 KEY 的部署订阅地址会变');
+const UUID直连密码 = /\|\| env\.(UUID|uuid)\b/.test(密码链) && !密码链.includes('仅UUID占位');
+记录('UUID 原文不当后台密码', !UUID直连密码, UUID直连密码 ? 'env.UUID 是公开值，出现在每个节点链接里' : '仅作非空占位，用随机不可猜值代替');
 
 // 页面优选：内嵌的前端脚本必须和 patches/page-bestip.js 逐字节一致，否则改了源文件忘了同步，
 // 线上跑的还是旧逻辑。这个坑很隐蔽，所以放进硬门禁。

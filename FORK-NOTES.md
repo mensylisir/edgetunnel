@@ -11,7 +11,7 @@
 | 文件头 | 带 UTF-8 BOM（`EF BB BF`） | 无 BOM |
 | 会话 Cookie | `MD5(UA + 加密秘钥 + 管理员密码)`，静态不变、服务端不校验有效期 | `到期时间戳.HMAC-SHA256(UA\|到期时间)`，服务端校验签名与有效期，1 天过期 |
 | 登录防护 | 无失败计数、无锁定，口令按字符提前返回（时序侧信道） | 同一来源 IP 连续 5 次失败锁定 10 分钟，返回 429；口令做恒定时间比较 |
-| 后台密码来源 | `ADMIN / PASSWORD / pswd / TOKEN / KEY / UUID` 任一 | 仅 `ADMIN / PASSWORD / pswd / TOKEN`，不再把 `KEY`、`UUID` 当密码 |
+| 后台密码来源 | `ADMIN / PASSWORD / pswd / TOKEN / KEY / UUID` 任一 | 与上游逐项对齐：`KEY` 仍当密码（否则只设 `KEY` 的部署 UUID 会变）；`UUID` 只作非空占位，不当密码 |
 | 节点 UUID 密钥 | 只能用 `KEY`，缺失时用硬编码默认密钥 | 新增 `SECRET`，优先级高于 `KEY`；使用默认密钥时会打印告警 |
 | Cloudflare 凭证 | `/admin/getCloudflareUsage?GlobalAPIKey=...` 走 URL | 只读取 KV 中已保存的凭证，URL 传参直接返回 400 |
 | 后台面板来源 | 硬编码 `https://edt-pages.github.io`，无法更换 | 调用收口到 `取静态页()`：可设 `PAGES_URL` 指向自建副本，也可由 `npm run embed` 整份内嵌进脚本（零外部请求） |
@@ -57,10 +57,33 @@
 自证方式（不需要知道你的密码，用合成密码跑）：
 
 ```bash
-npm run compat     # 同一 env 下，上游原版与当前版本产出的 UUID 必须逐位相同
+npm run compat          # 同一 env 下，上游原版与当前版本产出的 UUID 必须逐位相同
+npm run compat:matrix   # 12 种环境变量组合逐个实测，任何组合下地址变了就报错退出
 ```
 
-它会取 `git show 5b2aaf0:_worker.js` 作为对照，两边都请求 `/sub?token=…`，从订阅正文里解出节点 UUID 比对；同时验证第二条断言——**环境变量 `UUID` 能把节点 UUID 钉死**。
+`compat` 会取 `git show 5b2aaf0:_worker.js` 作为对照，两边都请求 `/sub?token=…`，从订阅正文里解出节点 UUID 比对；同时验证第二条断言——**环境变量 `UUID` 能把节点 UUID 钉死**。
+
+### 变量组合兼容矩阵
+
+上游原版的密码链有 9 项回退（`ADMIN/admin/PASSWORD/password/pswd/TOKEN/KEY/UUID/uuid`）。这条链直接决定 UUID，任何一个分支算错，订阅地址就变。本 fork 早期版本为了"后台密码不挪用 KEY"，把后三项删掉了 —— 实测发现这对老部署是破坏性的：
+
+- **只设 `KEY`**：UUID 从 `双MD5(KEY+KEY)` 变成 `双MD5("undefined"+KEY)` → **订阅地址直接变**
+- **只设 `UUID`**：密码链为空 → 命中"未配置 ADMIN"判定 → `/sub` 返回 404 → **订阅直接断**
+
+现在已按上游逐项对齐，`npm run compat:matrix` 逐组合实测（上游原版 vs 当前版本）：
+
+| 变量组合 | 结果 |
+| :--- | :--- |
+| `ADMIN` / `PASSWORD` / `TOKEN` | 不变 |
+| 只设 `KEY` | 不变（KEY 仍当密码，`UUID = 双MD5(KEY+KEY)`） |
+| `ADMIN` + `KEY` | 不变 |
+| `ADMIN` + `SECRET` | 不变 |
+| 只设 `UUID` | 不变（不再误判未配 ADMIN，订阅照常） |
+| `ADMIN` + `UUID` | 不变（UUID 钉死） |
+| `UUID` 格式非法 / `KEY` + 非法 `UUID` | 不变（原值当密码，与上游一致） |
+| 一个都不设 | 两版都返回伪装页（未配置状态，本来就无订阅） |
+
+唯一的行为差异：**只设 `UUID` 的部署，后台不能再用 UUID 原文登录**。UUID 出现在每个节点链接里，属于公开值，当密码等于把后台放出去；所以它只做"非空占位"，用随机不可猜值顶替。订阅本身照常工作，补设一个 `ADMIN` 就能登录后台。
 
 **万一地址真的变了，兜底办法**：更新前先把订阅内容存一份，从里面 `vless://` 后面那串 UUID 复制出来，在环境变量里加 `UUID = 那串值`（格式必须是标准 v4 UUID，如 `xxxxxxxx-xxxx-4xxx-8xxx-xxxxxxxxxxxx`）。代码检测到合法 `UUID` 变量时直接采用它，不再由 `ADMIN` 推导，订阅令牌随即回到原值。这条已实测：把 `ADMIN` 换成完全无关的值、只设 `UUID`，订阅里 16 个节点的 UUID 仍然是被钉住的那一串。
 
@@ -131,6 +154,8 @@ npm run pack     # 打两个包：embed 生成独立版 → zip → 校验包内
 这两组都在浏览器里，改它需要动面板 JS 本身；删掉不影响后台管理与订阅生成，只影响对应显示。
 
 **订阅地址是否会变**：不会，只要 `ADMIN`、`KEY`/`SECRET`、`HOST` 三个值不变。订阅令牌是 `MD5(host + UUID)`，UUID 是 `MD5(管理员密码 + 加密秘钥)`，两者都是纯函数，跟代码版本无关。快速订阅地址 `/{KEY}` 同理。
+
+换人替换 `_worker.js`（不管是谁拿这个仓库更新你的部署）也不影响地址——地址只由**你自己环境变量里的值**决定，代码只提供公式。前提是公式没被改坏：`npm run compat:matrix` 会把 12 种变量组合逐一代入上游原版与当前版本对跑，任何一个组合下 UUID 或可订阅性不一致就退出码 1。这个脚本存在的意义就是让"地址不会变"这句话有实测支撑，而不是口头承诺。
 
 ## 七、后台面板：三种取得方式
 

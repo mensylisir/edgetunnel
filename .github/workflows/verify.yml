@@ -17,6 +17,9 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v6
+        with:
+          # 兼容性测试要跟上游原版逐组合对跑，需要完整历史才能 git show 到上游提交
+          fetch-depth: 0
 
       - name: Setup Node
         uses: actions/setup-node@v4
@@ -28,3 +31,11 @@ jobs:
 
       - name: 认证行为测试
         run: node --test scripts/test-auth.mjs
+
+      - name: 订阅地址兼容矩阵
+        run: |
+          if git cat-file -e 5b2aaf0:_worker.js 2>/dev/null; then
+            node scripts/compat-matrix.mjs
+          else
+            echo "::warning::取不到上游提交 5b2aaf0，跳过兼容矩阵；本地请跑 npm run compat:matrix"
+          fi

@@ -114,10 +114,36 @@ test('登录成功会清空失败计数', async () => {
 	assert.equal([...env.KV.数据.keys()].some((键) => 键.startsWith('login_lock_')), false);
 });
 
-test('只配置 KEY 不配置 ADMIN 时不再把 KEY 当后台密码', async () => {
-	const env = 建环境({ ADMIN: undefined, KEY: 'Only-Key-Configured' });
-	const 响应 = await 执行(env, 造请求('/login'));
-	assert.equal(响应.status, 404);
+// 与 Worker 内 MD5MD5 同构：两次 MD5，第二次取第一次十六进制的 [7,27)
+const 双MD5 = (文本) => {
+	const 一 = createHash('md5').update(Buffer.from(String(文本), 'utf8')).digest('hex');
+	return createHash('md5').update(Buffer.from(一.slice(7, 27), 'utf8')).digest('hex');
+};
+const 成UUID = (摘要) => [摘要.slice(0, 8), 摘要.slice(8, 12), '4' + 摘要.slice(13, 16), '8' + 摘要.slice(17, 20), 摘要.slice(20)].join('-');
+
+test('只配置 KEY 不配置 ADMIN：订阅照常，UUID 与上游公式一致（地址不变）', async () => {
+	const 键 = 'Only-Key-Configured';
+	// 上游把 KEY 同时当管理员密码与加密秘钥：UUID = 双MD5(KEY + KEY)
+	const 期望UUID = 成UUID(双MD5(键 + 键));
+	const token = 双MD5('tunnel.example.com' + 期望UUID);
+	const 响应 = await 执行(建环境({ ADMIN: undefined, KEY: 键 }), 造请求('/sub?token=' + token));
+	assert.equal(响应.status, 200);
+	const 正文 = Buffer.from(await 响应.text(), 'base64').toString('utf8');
+	assert.ok(正文.includes(期望UUID), `订阅里应出现 ${期望UUID}`);
+});
+
+test('只配置 UUID：订阅不断，但 UUID 原文不能当后台密码', async () => {
+	const 钉住 = '3de3b793-296c-4e23-86c7-484463559628';
+	const env = 建环境({ ADMIN: undefined, UUID: 钉住 });
+	const token = 双MD5('tunnel.example.com' + 钉住);
+	const 订阅 = await 执行(env, 造请求('/sub?token=' + token));
+	assert.equal(订阅.status, 200, '不能因为没设 ADMIN 就让订阅 404');
+	const 正文 = Buffer.from(await 订阅.text(), 'base64').toString('utf8');
+	assert.ok(正文.includes(钉住));
+
+	// UUID 会出现在每个节点链接里，等于公开值；它只做「非空占位」，登录必须失败
+	const 登录 = await 登出(env, 钉住);
+	assert.ok(!(await 登录.text()).includes('"success":true'), 'UUID 原文不应能登录后台');
 });
 
 test('后台面板默认仍从上游静态页加载', async () => {

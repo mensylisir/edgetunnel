@@ -14,9 +14,10 @@
     "pack": "node scripts/pack.mjs",
     "check:standalone": "node scripts/verify-standalone.mjs",
     "compat": "node scripts/compat-uuid.mjs",
+    "compat:matrix": "node scripts/compat-matrix.mjs",
     "optimize": "node scripts/optimize.mjs",
     "e2e:bestip": "node scripts/e2e-bestip.mjs",
-    "verify": "npm run build && npm run check && npm test && npm run compat"
+    "verify": "npm run build && npm run check && npm test && npm run compat && npm run compat:matrix"
   },
   "devDependencies": {
     "wrangler": "^4.42.0"

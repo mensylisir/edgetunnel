@@ -750,7 +750,8 @@ export default {
 		const url = new URL(请求URL文本);
 		const UA = request.headers.get('User-Agent') || 'null';
 		const upgradeHeader = (request.headers.get('Upgrade') || '').toLowerCase(), contentType = (request.headers.get('content-type') || '').toLowerCase();
-		const 管理员密码 = env.ADMIN || env.admin || env.PASSWORD || env.password || env.pswd || env.TOKEN;
+		const 环境UUID占位 = env.UUID || env.uuid;
+		const 管理员密码 = env.ADMIN || env.admin || env.PASSWORD || env.password || env.pswd || env.TOKEN || env.KEY || (环境UUID占位 && /^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-4[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$/.test(环境UUID占位) ? '仅UUID占位-' + crypto.randomUUID() : 环境UUID占位);
 		const 加密秘钥 = env.SECRET || env.KEY || 默认加密秘钥;
 		提示默认密钥(加密秘钥);
 		const userIDMD5 = await MD5MD5(管理员密码 + 加密秘钥);
