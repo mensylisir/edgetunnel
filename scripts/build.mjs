@@ -78,22 +78,42 @@ if (!源码.includes(安全标记)) {
 }
 
 // 后台面板是纯静态单页（约 1 MB HTML），上游托管在作者的 GitHub Pages 上。
-// 它所有数据请求都打回本 Worker 域名，所以换个宿主完全不影响功能 —— 只要把基址做成可配。
-// 设了 PAGES_URL 就能指向自己镜像的副本，断开这个单点依赖（作者改页/关站/被投毒都不再影响你）。
-const 静态页标记 = '静态页基址可配置（本 fork 新增）';
-if (!源码.includes(静态页标记)) {
-	const 定义位置 = 定位('const Pages静态页面 = ');
-	行.splice(
-		定义位置 + 1,
-		0,
+// 它的数据请求全是站点根相对路径，由浏览器打回本 Worker，所以页面放哪儿都不影响功能。
+// 这里做两件事：① 基址可由 PAGES_URL 覆盖；② 四个调用点收口到 取静态页()，
+// 让 scripts/embed-panel.mjs 可以把面板整份塞进脚本，一个文件、零外部请求。
+if (!源码.includes('let 内嵌页面')) {
+	const 常量区 = 定位('全局常量和工具函数');
+	const 追加 = [];
+
+	if (!源码.includes('function 静态页基址(')) {
+		追加.push(
+			'// 静态页基址可配置（本 fork 新增）：设环境变量 PAGES_URL 指向自己镜像的后台面板，',
+			'// 留空则沿用上游默认地址，行为与上游一致。',
+			'function 静态页基址(env) {',
+			'\tconst 覆盖 = env && (env.PAGES_URL || env.静态页面);',
+			"\treturn 覆盖 ? String(覆盖).trim().replace(/\\/+$/, '') : Pages静态页面;",
+			'}',
+			''
+		);
+	}
+
+	追加.push(
+		'// 面板内嵌位（本 fork 新增）：默认 null 走网络；由 npm run embed 替换成面板 HTML 后，',
+		'// /admin、/login 等页面直接从脚本内部返回，不再请求任何第三方站点。',
+		'let 内嵌页面 = null;',
 		'',
-		'// 静态页基址可配置（本 fork 新增）：设环境变量 PAGES_URL 指向自己镜像的后台面板，',
-		'// 留空则沿用上游默认地址，行为与上游一致。',
-		'function 静态页基址(env) {',
-		'\tconst 覆盖 = env && (env.PAGES_URL || env.静态页面);',
-		"\treturn 覆盖 ? String(覆盖).trim().replace(/\\/+$/, '') : Pages静态页面;",
-		'}'
+		'function 取静态页(env, 路径) {',
+		"\tconst 键 = 路径.split('?')[0];",
+		'\tif (内嵌页面 && Object.prototype.hasOwnProperty.call(内嵌页面, 键)) {',
+		"\t\treturn Promise.resolve(new Response(内嵌页面[键], { status: 200, headers: { 'Content-Type': 'text/html; charset=utf-8' } }));",
+		'\t}',
+		'\tconst 目标地址 = 静态页基址(env) + 路径;',
+		'\treturn fetch(目标地址);',
+		'}',
+		''
 	);
+
+	行.splice(常量区, 0, ...追加);
 
 	let 引用数 = 0;
 	for (let 索引 = 0; 索引 < 行.length; 索引++) {
@@ -101,8 +121,17 @@ if (!源码.includes(静态页标记)) {
 		行[索引] = 行[索引].split('Pages静态页面 +').join('静态页基址(env) +');
 		引用数++;
 	}
-	if (引用数 !== 4) throw new Error(`静态页引用点数量异常：期望 4 处，实际 ${引用数} 处 —— 上游结构变了，请复核`);
-	变更.push(`后台面板基址支持 env.PAGES_URL 覆盖（改写 ${引用数} 处引用）`);
+	if (引用数 !== 4) throw new Error(`静态页基址引用点数量异常：期望 4 处，实际 ${引用数} 处 —— 上游结构变了，请复核`);
+
+	let 收口数 = 0;
+	for (let 索引 = 0; 索引 < 行.length; 索引++) {
+		if (!行[索引].includes('fetch(静态页基址(env) + ')) continue;
+		行[索引] = 行[索引].split('fetch(静态页基址(env) + ').join('取静态页(env, ');
+		收口数++;
+	}
+	if (收口数 !== 4) throw new Error(`静态页 fetch 调用点数量异常：期望 4 处，实际 ${收口数} 处 —— 上游结构变了，请复核`);
+
+	变更.push(`后台面板：基址支持 PAGES_URL（${引用数} 处）、调用收口到 取静态页()（${收口数} 处）、可整份内嵌`);
 }
 
 源码 = 行.join('\n');

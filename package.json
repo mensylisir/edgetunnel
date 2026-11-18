@@ -9,6 +9,7 @@
     "check": "node scripts/check.mjs",
     "test": "node --test scripts/test-auth.mjs",
     "mirror": "node scripts/mirror-panel.mjs",
+    "embed": "node scripts/embed-panel.mjs",
     "verify": "npm run build && npm run check && npm test"
   },
   "devDependencies": {
