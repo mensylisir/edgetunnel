@@ -18,20 +18,30 @@
 
 ## 二、环境变量
 
-原有变量不变，新增两个：
+**最小可用集只有两项**，与升级前完全一致，不需要新增或改名：
+
+| 名称 | 类型 | 必填 | 说明 |
+| :--- | :--- | :---: | :--- |
+| `ADMIN` | Variables and secrets（文本） | 是 | 后台登录密码。**大小写无要求**：代码同时认 `ADMIN` / `admin` / `PASSWORD` / `password` / `pswd` / `TOKEN` |
+| `KV` | Bindings（KV 命名空间） | 是 | 绑定名必须**精确为 `KV`**，代码只读 `env.KV`。名字写成 `KV_NAMESPACE`、`EDGETUNNEL_KV` 等都会判定为“未绑定 KV”，直接返回 `noKV` |
+
+新增的两个都是**可选**：
 
 | 变量 | 必填 | 说明 |
 | :--- | :---: | :--- |
-| `SECRET` | 建议 | 参与会话签名与节点 UUID 推导。设置后不再依赖硬编码默认密钥，`KEY` 的快速订阅路径语义保持不变 |
-| `PAGES_URL` | 可选 | 后台面板静态文件的托管地址（如 `https://你的面板.pages.dev`）。留空则用上游 `https://edt-pages.github.io`，行为不变 |
+| `SECRET` | 可选 | 参与会话签名与节点 UUID 推导。设置后不再依赖硬编码默认密钥，`KEY` 的快速订阅路径语义保持不变。**设置即改变 UUID**，订阅地址要重新导入 |
+| `PAGES_URL` | 可选 | 后台面板静态文件的托管地址。用 `edgetunnel-standalone.zip` 时无意义（内嵌页优先于任何地址）；用 `edgetunnel-pages.zip` 时留空则走上游 `https://edt-pages.github.io` |
+
+只配 `ADMIN` + `KV` 的实际行为（已实测）：登录 200、`/admin` 993 KB 由脚本内部返回、`/sub?token=…` 用旧公式推导的地址仍返回 4.4 KB 订阅内容，没有落到伪装页。
 
 ## 三、升级时要知道的兼容性变化
 
 1. **旧登录态失效**：Cookie 格式变了，升级后需要重新输入一次后台密码。
 2. **只配 `KEY`、不配 `ADMIN` 的部署会变成 `noADMIN` 页**：这是有意的，`KEY` 会出现在 `/{KEY}` 订阅路径里，不能再兼任后台密码。请显式设置 `ADMIN`。
-3. **节点 UUID 算法未改**：`MD5(管理员密码 + 加密秘钥)` 保持不变，已导入的节点不会失效。只有当你**主动**设置 `SECRET` 时 UUID 才会变化，此时需要重新导入节点。
-4. **`/admin/getCloudflareUsage` 不再接受 URL 参数**：凭证必须先在后台保存到 KV（`cf.json`）。
-5. **`wrangler.toml` 的 `name` 改为 `edgetunnel`**：如果你之前用 `v20251104` 这个名字部署过 Worker，改回旧名再部署，避免出现第二个 Worker。
+3. **节点 UUID 算法未改**：仍是 `MD5(管理员密码 + 加密秘钥)`（内部是两次 MD5，第二次取第一次十六进制的 `[7,27)`）。密钥取值链从旧版 `env.KEY || 默认密钥` 变成 `env.SECRET || env.KEY || 默认密钥`——**没设 `SECRET`/`KEY` 时两者都落到同一个默认密钥，UUID 与旧版逐位相同**，订阅地址不用改。只有**主动**设置 `SECRET` 时 UUID 才会变，那时要重新导入节点。
+4. **只配 `ADMIN` 时 UUID 可被离线推算**：默认密钥是公开常量，知道 `ADMIN` 就能算出 UUID。这不是本次改动引入的（旧版同样如此），但意味着 `ADMIN` 要当密钥看待——用 16 位以上随机串即可，不必为了它改 `SECRET`。
+5. **`/admin/getCloudflareUsage` 不再接受 URL 参数**：凭证必须先在后台保存到 KV（`cf.json`）。
+6. **`wrangler.toml` 的 `name` 改为 `edgetunnel`**：如果你之前用 `v20251104` 这个名字部署过 Worker，改回旧名再部署，避免出现第二个 Worker。
 
 ## 四、日常维护
 
