@@ -142,20 +142,31 @@ for (const t of 目标) {
 	);
 }
 
-console.log('\n── deploy-targets.json（只含地址，可提交）──');
-const 清单正文 = JSON.stringify(目标.map(({ _令牌, _序, _域名, _账号名, ...其余 }) => 其余), null, 2) + '\n';
-console.log(清单正文);
+console.log('\n── 方案 A（推荐）：只配一个 secret，不要 deploy-targets.json ──');
+const 全量 = {};
+for (const t of 目标) 全量[t.name] = { token: t._令牌, accountId: t.accountId, project: t.project, domains: t._域名 === '（仅 pages.dev）' ? [] : t._域名.split(', ') };
+console.log(JSON.stringify(全量) + '\n');
+console.log('贴进 GitHub secret：Name = CF_TOKENS，Secret = 上面这一整行。');
+console.log('账号、项目、令牌都在里面，不再需要第二个文件。\n');
 
+console.log('── 方案 B：secret 只放令牌，账号与项目放 deploy-targets.json ──');
 const 令牌json = {};
 for (const t of 目标) 令牌json[t.name] = t._令牌;
-console.log('── CF_TOKENS（粘贴到 GitHub secret，不要提交）──');
 console.log(JSON.stringify(令牌json) + '\n');
+
+const 清单正文 = JSON.stringify(目标.map(({ _令牌, _序, _域名, _账号名, ...其余 }) => 其余), null, 2) + '\n';
 
 if (写文件) {
 	writeFileSync(清单文件, 清单正文);
-	console.log(`已写入 ${清单文件}（${目标.length} 项）`);
-} else {
-	console.log('加 --write 可直接写入 deploy-targets.json。');
+	console.log(`已写入 ${清单文件}（${目标.length} 项，方案 B 用）`);
+}
+if (参数.includes('--write-secret')) {
+	const 文件 = resolve(根目录, 'cf-tokens.local.json');
+	writeFileSync(文件, JSON.stringify(全量, null, 2) + '\n');
+	console.log(`已写入 ${文件}（方案 A 用：含明文 token，已被 .gitignore 忽略，别提交）`);
+}
+if (!写文件 && !参数.includes('--write-secret')) {
+	console.log('加 --write 写 deploy-targets.json（方案 B）；加 --write-secret 把方案 A 的 JSON 存成文件方便复制。');
 }
 
 // 本地留一份带 token 的完整对照，方便自己查；文件名已被 .gitignore 忽略

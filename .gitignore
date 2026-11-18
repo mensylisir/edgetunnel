@@ -39,6 +39,7 @@ wrangler-install.log
 # 带 token 的本地私有清单用另一个名字，绝不入库
 deploy-targets.local.json
 deploy-targets.*.local.json
+cf-tokens.local.json
 .tokens.txt
 .deploy/
 

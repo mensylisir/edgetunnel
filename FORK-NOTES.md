@@ -296,7 +296,18 @@ npm run deploy:all -- --dry-run --check-tokens
 }
 ```
 
-**加一个账号就三步**：往 `deploy-targets.json` 加一行 → 往 `CF_TOKENS` 加一个键 → push。别的一个都不用动，也不用新增 workflow。
+**也可以只要一个 secret，连 `deploy-targets.json` 都不要。** 把每项写成对象，带上 `accountId` 和 `project`，脚本就认它是一条完整目标：
+
+```json
+{
+  "edt666": { "token": "cfut_xxx", "accountId": "a7e447743c7a4eafe3ff67f470955fa2", "project": "edt666" },
+  "blog":   { "token": "cfut_yyy", "accountId": "3f1c02ab…", "project": "my-blog" }
+}
+```
+
+两种写法可以混：清单文件存在时以文件为准，不存在就把 secret 里自带 `accountId` + `project` 的条目当作清单。这样账号、项目、令牌三者都在同一个地方，不存在"两份清单要对齐、错位"的问题。
+
+代价只有一个：secret 存下后**不可读回**，改任何一个 token 都得把整段 JSON 重贴一遍。账号少时推荐这种；账号多、又经常换 token 时，方案 B（地址入库 + 令牌入 secret）更省事。
 
 **12 个账号其实可能只需要 1 个 token**：建 token 时 Account Resources 选 `Include → All accounts`，这一个 token 就能推全你登录下的所有账号。这时 `CF_TOKENS` 只写一条通配：
 
@@ -320,10 +331,15 @@ npm run discover            # 只打印：查到的账号、项目、绑定域�
 npm run discover -- --write # 顺便把结果写进 deploy-targets.json
 ```
 
-它对每个 token 调 `GET /accounts` 和 `/accounts/{id}/pages/projects`，输出：
+它对每个 token 调 `GET /accounts` 和 `/accounts/{id}/pages/projects`，输出两套方案，挑一套用：
 
-- `deploy-targets.json` 的内容（name / accountId / project，可直接提交）
-- 以及 `CF_TOKENS` 的 JSON（**只粘进 GitHub secret，不要提交**）
+- **方案 A（一个 secret 就够）**：`{"name": {"token","accountId","project"}}` 全量 JSON，贴进 `CF_TOKENS` 即可，`deploy-targets.json` 可以不存在
+- **方案 B（地址入库 + 令牌入 secret）**：`deploy-targets.json` 的内容（name / accountId / project，可提交）+ 只含令牌的 `CF_TOKENS`
+
+```bash
+npm run discover -- --write-secret   # 方案 A：把全量 JSON 存成 cf-tokens.local.json 方便整段复制
+npm run discover -- --write          # 方案 B：写 deploy-targets.json
+```
 
 跨账号同名项目（都叫 `edt666` 那种）会自动加序号区分，否则 `CF_TOKENS` 的键会互相覆盖。token 文件被 git 跟踪时脚本直接拒绝运行。
 

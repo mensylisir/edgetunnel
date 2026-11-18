@@ -96,28 +96,83 @@ async function 预检(项) {
 if (!existsSync(产物)) {
 	退出(1, `缺少 ${产物}\n先跑：npm run embed（或 npm run build && npm run mirror && npm run embed）`);
 }
-if (!existsSync(配置文件)) {
-	退出(1, `找不到清单文件 ${配置文件}`);
-}
-
-let 清单;
-try {
-	清单 = JSON.parse(readFileSync(配置文件, 'utf8'));
-} catch (e) {
-	退出(1, `${配置文件} 不是合法 JSON：${e.message}`);
-}
-if (!Array.isArray(清单) || 清单.length === 0) 退出(1, '清单应为非空数组，每项一个账号');
-
-// ── 集中式令牌表：CF_TOKENS 是 {"name 或 project": "token"} 形式的 JSON ──────
+// ── 集中式令牌表：CF_TOKENS ──────────────────────────────────────────────────
+// 两种写法都认，也可以混着用：
+//   简写  {"edt666": "cfut_xxx"}
+//         → 只有令牌，accountId / project 仍由 deploy-targets.json 提供
+//   全量  {"edt666": {"token": "cfut_xxx", "accountId": "a7e4…", "project": "edt666"}}
+//         → 账号、项目、令牌都在 secret 里，deploy-targets.json 可以不存在
 let 令牌表 = null;
 if (process.env.CF_TOKENS) {
 	try {
 		令牌表 = JSON.parse(process.env.CF_TOKENS);
 	} catch (e) {
-		退出(1, `环境变量 CF_TOKENS 不是合法 JSON：${e.message}\n期望形如 {"edt666":"cfut_xxx","备用-香港":"cfut_yyy"}`);
+		退出(
+			1,
+			`环境变量 CF_TOKENS 不是合法 JSON：${e.message}\n` +
+				'期望形如 {"edt666":"cfut_xxx"}，或 {"edt666":{"token":"cfut_xxx","accountId":"32位十六进制","project":"edt666"}}'
+		);
 	}
 	if (!令牌表 || typeof 令牌表 !== 'object' || Array.isArray(令牌表)) {
-		退出(1, 'CF_TOKENS 应为 {"名称": "令牌"} 形式的对象');
+		退出(1, 'CF_TOKENS 应为 {"名称": "令牌"} 或 {"名称": {"token": …, "accountId": …, "project": …}} 形式的对象');
+	}
+}
+
+/** 从字符串或 {token: …} 对象里取出令牌 */
+function 取值中令牌(值) {
+	if (typeof 值 === 'string') return 值;
+	if (值 && typeof 值 === 'object' && !Array.isArray(值)) {
+		const t = 值.token ?? 值.apiToken;
+		if (typeof t === 'string') return t;
+	}
+	return null;
+}
+
+/** CF_TOKENS 里同时带 accountId 与 project 的条目，本身就是一条完整目标 */
+function 取内联项(值) {
+	if (!值 || typeof 值 !== 'object' || Array.isArray(值)) return null;
+	const token = 取值中令牌(值);
+	if (!token || !token.trim()) return null;
+	if (!值.accountId || !值.project) return null;
+	return {
+		token: token.trim(),
+		accountId: String(值.accountId),
+		project: String(值.project),
+		domains: 值.domains,
+	};
+}
+
+/** 把 CF_TOKENS 里所有完整条目抽成清单 —— 一份 secret 就能部署，无需第二个文件 */
+function 由令牌表生成清单() {
+	const 结果 = [];
+	if (!令牌表) return 结果;
+	for (const [名, 值] of Object.entries(令牌表)) {
+		if (名 === '*') continue;
+		const 项 = 取内联项(值);
+		if (项) 结果.push({ name: 名, accountId: 项.accountId, project: 项.project, domains: 项.domains });
+	}
+	return 结果;
+}
+
+// ── 清单来源：优先 deploy-targets.json；不存在则用 CF_TOKENS 里的完整条目 ────
+let 清单;
+if (existsSync(配置文件)) {
+	try {
+		清单 = JSON.parse(readFileSync(配置文件, 'utf8'));
+	} catch (e) {
+		退出(1, `${配置文件} 不是合法 JSON：${e.message}`);
+	}
+	if (!Array.isArray(清单) || 清单.length === 0) 退出(1, '清单应为非空数组，每项一个账号');
+} else {
+	清单 = 由令牌表生成清单();
+	if (!清单.length) {
+		退出(
+			1,
+			`找不到清单文件 ${配置文件}，CF_TOKENS 里也没有自带 accountId 与 project 的条目。\n` +
+				'任选一条路：\n' +
+				'  1) 只用一个 secret：npm run discover -- --write-secret，把生成的整段 JSON 贴进 CF_TOKENS\n' +
+				'  2) 仍用 deploy-targets.json 放账号与项目，CF_TOKENS 只放 {"名称":"令牌"}'
+		);
 	}
 }
 
@@ -129,13 +184,13 @@ function 从令牌表取(项) {
 	if (!令牌表) return null;
 	for (const 键 of [项.name, 项.project]) {
 		if (!键) continue;
-		const 值 = 令牌表[键];
+		const 值 = 取值中令牌(令牌表[键]);
 		if (typeof 值 === 'string' && 值.trim()) return { 值: 值.trim(), 通配: false };
 	}
 	// "*" 通配：一个 token 覆盖全部目标。
 	// 仅当所有账号都在同一个 Cloudflare 登录下（令牌的 Account Resources 选了 All accounts）时才成立。
 	// 代价是这个 token 泄漏即全部失守，所以只在自用、且确实同属一个登录时用。
-	const 通配 = 令牌表['*'];
+	const 通配 = 取值中令牌(令牌表['*']);
 	if (typeof 通配 === 'string' && 通配.trim()) return { 值: 通配.trim(), 通配: true };
 	return null;
 }
