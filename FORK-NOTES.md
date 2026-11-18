@@ -109,6 +109,13 @@ npm run optimize -- --host 你的域名 --password 你的后台密码
 
 可用参数：`--sample 200`（候选 IP 数，越大越慢但越容易命中好线路）、`--ports 443,2053`、`--top 16`、`--timeout 4000`、`--concurrency 16`。
 
+想让它自己定期跑（Cloudflare 的 Cron 触发器做不到这件事，它测的是边缘到 IP 的距离，不是你的），就在跑代理客户端的那台机器上加一条系统定时任务：
+
+```bash
+# 每 6 小时重测一次并覆盖 KV，密码从环境变量读，不写进命令行
+0 */6 * * * EDGETUNNEL_PASSWORD='你的密码' /usr/bin/node /path/to/edgetunnel/scripts/optimize.mjs --host 你的域名 >> /var/log/edgetunnel-optimize.log 2>&1
+```
+
 写入后的订阅备注形如 `104.16.132.235:443#美国·洛杉矶·138ms`：国家与城市取自实测落地机房，延迟是你本机到该 IP 的握手耗时。想换回随机优选，在面板里把优选来源切回「随机」即可。
 
 ### 机房 → 位置对照（内置的一部分）
