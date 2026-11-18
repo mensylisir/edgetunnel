@@ -2,6 +2,7 @@ name: Upstream Sync
 
 permissions:
   contents: write
+  issues: write
 
 on:
   schedule:
@@ -10,7 +11,7 @@ on:
 
 jobs:
   sync_latest_from_upstream:
-    name: Sync latest commits from upstream repo
+    name: 同步上游并按本仓库补丁重新构建
     runs-on: ubuntu-latest
     if: ${{ github.event.repository.fork }}
 
@@ -21,24 +22,52 @@ jobs:
           fetch-depth: 0
           ref: main
 
-      - name: Sync upstream changes
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: 拉取上游
         run: |
           git config user.name "GH Action - Upstream Sync"
           git config user.email "action@github.com"
-
           git remote add upstream https://github.com/cmliu/edgetunnel.git
           git fetch upstream main
 
-          if git diff --quiet HEAD upstream/main; then
-            # 内容和上游一致，直接对齐，顺带清理历史分叉留下的多余 merge commit
-            git reset --hard upstream/main
-            git push --force-with-lease origin main
-          else
-            # 有本地修改，保持原来的合并方式，不覆盖任何人的改动
-            if ! git pull --no-rebase upstream main; then
-              echo "[Error] 合并上游变更产生冲突，自动同步已暂停，请手动 Sync Fork 并解决冲突。"
-              echo "[Error] Merge conflict detected while syncing upstream. Please sync your fork manually and resolve the conflicts."
-              exit 1
-            fi
-            git push origin main
+      - name: 用上游产物覆盖代码与文档
+        run: git checkout upstream/main -- _worker.js README.md CHANGELOG LICENSE img.png
+
+      - name: 重新应用清理与安全补丁
+        run: node scripts/build.mjs
+
+      - name: 自检（结构 + 语法 + 认证行为）
+        run: |
+          node scripts/check.mjs
+          node --test scripts/test-auth.mjs
+
+      - name: 提交并推送
+        run: |
+          if git diff --quiet; then
+            echo "上游无变化，跳过提交"
+            exit 0
           fi
+          git add -A _worker.js README.md CHANGELOG LICENSE img.png
+          git commit -m "chore: 同步上游 $(git rev-parse --short upstream/main) 并重新应用清理/安全补丁"
+          git push origin main
+
+      - name: 失败时开 issue 提醒人工复核
+        if: failure()
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const 标题 = '上游同步失败：清理/安全补丁需要人工复核';
+            const { data: 已有 } = await github.rest.issues.listForRepo({
+              owner: context.repo.owner, repo: context.repo.repo, state: 'open', per_page: 50
+            });
+            if (已有.some((项) => 项.title === 标题)) return;
+            await github.rest.issues.create({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              title: 标题,
+              body: '自动同步在上游合并后未能通过 `scripts/build.mjs` 或 `scripts/check.mjs`。\n\n本地执行 `npm run verify` 复现，按报错修正 `patches/` 内容与 `scripts/build.mjs` 的锚点后提交即可。'
+            });

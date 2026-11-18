@@ -1,0 +1,16 @@
+{
+  "name": "edgetunnel",
+  "version": "2.1.0",
+  "private": true,
+  "type": "module",
+  "description": "edgetunnel 2.1 fork：清理冗余注释 + 后台认证加固",
+  "scripts": {
+    "build": "node scripts/build.mjs",
+    "check": "node scripts/check.mjs",
+    "test": "node --test scripts/test-auth.mjs",
+    "verify": "npm run build && npm run check && npm test"
+  },
+  "devDependencies": {
+    "wrangler": "^4.42.0"
+  }
+}

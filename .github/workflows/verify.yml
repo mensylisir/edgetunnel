@@ -1,0 +1,30 @@
+name: Verify
+
+permissions:
+  contents: read
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+
+jobs:
+  verify:
+    name: 结构检查与认证行为测试
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: 结构 / 语法 / 补丁完整性
+        run: node scripts/check.mjs
+
+      - name: 认证行为测试
+        run: node --test scripts/test-auth.mjs

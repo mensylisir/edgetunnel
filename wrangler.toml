@@ -1,7 +1,9 @@
-name = "v20251104"
+name = "edgetunnel"
 main = "_worker.js"
-compatibility_date = "2025-11-04"
-keep_vars = true
+compatibility_date = "2026-11-10"
+
+# 若你已经在 Cloudflare 上用旧名称（v20251104）部署过 Worker，
+# 请把上面的 name 改回旧名称，否则 wrangler 会另建一个第二个 Worker。
 
 #[[kv_namespaces]]
 #binding = "KV"			#KV绑定名默认不可修改

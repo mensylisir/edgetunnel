@@ -1,0 +1,18 @@
+				} else if (访问路径 === 'login') {//处理登录页面和登录请求
+					const 会话令牌 = 读取会话令牌(request);
+					if (await 校验会话令牌(会话令牌, UA, 管理员密码, 加密秘钥)) return new Response('重定向中...', { status: 302, headers: { 'Location': '/admin' } });
+					if (request.method === 'POST') {
+						const 请求标识 = (await MD5MD5(访问IP)).slice(0, 16);
+						const 锁定剩余 = await 登录限流剩余秒(env, 请求标识);
+						if (锁定剩余 > 0) return new Response(JSON.stringify({ success: false, error: '登录失败次数过多，请 ' + Math.ceil(锁定剩余 / 60) + ' 分钟后再试' }), { status: 429, headers: { 'Content-Type': 'application/json;charset=utf-8', 'Retry-After': String(锁定剩余) } });
+						const params = new URLSearchParams(await request.text());
+						if (恒定时间比较(params.get('password') || '', String(管理员密码).replace(/[\r\n]/g, ''))) {
+							await 清除登录失败(env, 请求标识);
+							const 令牌 = await 生成会话令牌(UA, 管理员密码, 加密秘钥);
+							const 响应 = new Response(JSON.stringify({ success: true }), { status: 200, headers: { 'Content-Type': 'application/json;charset=utf-8' } });
+							响应.headers.set('Set-Cookie', 'auth=' + 令牌 + '; Path=/; Max-Age=' + 会话有效期 + '; HttpOnly; Secure; SameSite=Lax');
+							return 响应;
+						}
+						await 记录登录失败(env, 请求标识);
+					}
+					return fetch(Pages静态页面 + '/login');

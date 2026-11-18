@@ -1,0 +1,3 @@
+					const 会话令牌 = 读取会话令牌(request);
+					// 没有cookie或cookie无效，跳转到/login页面
+					if (!await 校验会话令牌(会话令牌, UA, 管理员密码, 加密秘钥)) return new Response('重定向中...', { status: 302, headers: { 'Location': '/login' } });
