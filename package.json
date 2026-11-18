@@ -19,7 +19,8 @@
     "optimize": "node scripts/optimize.mjs",
     "colo": "node scripts/colo-drift.mjs",
     "e2e:bestip": "node scripts/e2e-bestip.mjs",
-    "verify": "npm run build && npm run check && npm test && npm run compat && npm run compat:matrix"
+    "verify": "npm run build && npm run check && npm test && npm run compat && npm run compat:matrix",
+    "discover": "node scripts/discover-accounts.mjs"
   },
   "devDependencies": {
     "wrangler": "^4.42.0"

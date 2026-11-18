@@ -308,6 +308,25 @@ npm run deploy:all -- --dry-run --check-tokens
 
 成立的前提是那些账号**都在同一个 Cloudflare 登录下**（Dashboard 左侧账号切换器里能看到它们）。如果 12 个账号是 12 个独立邮箱登录，`All accounts` 只覆盖当前这一个登录，其余必须各自建 token。代价也要认：通配 token 泄漏即全部失守，所以只在自用时这么配。
 
+**独立登录的多账号：别手抄 accountId 和项目名**
+
+12 个账号各自独立登录时，每个账号要单独建 token，而且 accountId 与项目名只能一个个打开 Dashboard 抄 —— 抄错 project 名正是唯一会伤到订阅地址的错误。所以让 token 自己去问：
+
+```bash
+# 一行一个 token，文件已在 .gitignore 里
+printf 'cfut_aaa…\ncfut_bbb…\n' > .tokens.txt
+
+npm run discover            # 只打印：查到的账号、项目、绑定域名，以及两份 JSON
+npm run discover -- --write # 顺便把结果写进 deploy-targets.json
+```
+
+它对每个 token 调 `GET /accounts` 和 `/accounts/{id}/pages/projects`，输出：
+
+- `deploy-targets.json` 的内容（name / accountId / project，可直接提交）
+- 以及 `CF_TOKENS` 的 JSON（**只粘进 GitHub secret，不要提交**）
+
+跨账号同名项目（都叫 `edt666` 那种）会自动加序号区分，否则 `CF_TOKENS` 的键会互相覆盖。token 文件被 git 跟踪时脚本直接拒绝运行。
+
 **只配了一部分令牌也能跑**：工作流里带 `--skip-missing`，没有令牌的账号会被列出来跳过，其余照常部署。想手动触发某几个，用 Actions 页面的 **Run workflow**，在 `only` 里填 name（逗号分隔）。
 
 **安全约定**：一个账号一个 token，不要用一个能管全部账号的 token —— 那个泄漏了就是全部失守。每个只授 `Account → Cloudflare Pages → Edit`。
