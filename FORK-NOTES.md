@@ -43,6 +43,27 @@
 5. **`/admin/getCloudflareUsage` 不再接受 URL 参数**：凭证必须先在后台保存到 KV（`cf.json`）。
 6. **`wrangler.toml` 的 `name` 改为 `edgetunnel`**：如果你之前用 `v20251104` 这个名字部署过 Worker，改回旧名再部署，避免出现第二个 Worker。
 
+### 订阅地址会不会变
+
+`/sub?token=…` 里的令牌 = `双MD5(host + UUID)`，`UUID = 双MD5(管理员密码 + 加密秘钥)`。两个输入都不随代码版本变化，所以**只要下面四个值不动，地址就不动**：
+
+| 值 | 改动后果 |
+| :--- | :--- |
+| `ADMIN` 的值 | 变 → UUID 变 → 订阅地址变 |
+| `SECRET` | 新设 → 密钥从默认常量换掉 → UUID 变 |
+| `KEY` | 新设 → 同上（且 `KEY` 会成为 `/{KEY}` 快速订阅路径） |
+| `HOST` | 新设 → 令牌里的 host 换成它，地址变；不用 `HOST` 时 host 取访问域名 |
+
+自证方式（不需要知道你的密码，用合成密码跑）：
+
+```bash
+npm run compat     # 同一 env 下，上游原版与当前版本产出的 UUID 必须逐位相同
+```
+
+它会取 `git show 5b2aaf0:_worker.js` 作为对照，两边都请求 `/sub?token=…`，从订阅正文里解出节点 UUID 比对；同时验证第二条断言——**环境变量 `UUID` 能把节点 UUID 钉死**。
+
+**万一地址真的变了，兜底办法**：更新前先把订阅内容存一份，从里面 `vless://` 后面那串 UUID 复制出来，在环境变量里加 `UUID = 那串值`（格式必须是标准 v4 UUID，如 `xxxxxxxx-xxxx-4xxx-8xxx-xxxxxxxxxxxx`）。代码检测到合法 `UUID` 变量时直接采用它，不再由 `ADMIN` 推导，订阅令牌随即回到原值。这条已实测：把 `ADMIN` 换成完全无关的值、只设 `UUID`，订阅里 16 个节点的 UUID 仍然是被钉住的那一串。
+
 ## 四、日常维护
 
 ```bash
