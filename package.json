@@ -11,6 +11,8 @@
     "sync:bestip": "node scripts/sync-bestip.mjs",
     "mirror": "node scripts/mirror-panel.mjs",
     "embed": "node scripts/embed-panel.mjs",
+    "pack": "node scripts/pack.mjs",
+    "check:standalone": "node scripts/verify-standalone.mjs",
     "optimize": "node scripts/optimize.mjs",
     "e2e:bestip": "node scripts/e2e-bestip.mjs",
     "verify": "npm run build && npm run check && npm test"

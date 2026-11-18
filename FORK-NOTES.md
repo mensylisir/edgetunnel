@@ -52,16 +52,54 @@ npm run verify       # build + check + test 串跑
 
 ## 五、没有“修复”的项，以及原因
 
-1. **第三方单点依赖**：默认反代 IP 指向作者域名，订阅转换走 `sub.cmliussss.net`。`PROXYIP`、`URL` 可覆盖前两者，订阅转换仍是硬依赖。**后台面板已可自建**（见第七节），`PAGES_URL` 一设就断开。
+1. **第三方单点依赖**：默认反代 IP 指向作者域名，订阅转换走 `sub.cmliussss.net`。`PROXYIP` 可覆盖前者，订阅转换仍需要在线 `SUBAPI`（除非自建 subconverter）。**后台面板这条已经断开了**：用 `edgetunnel-standalone.zip` 时四个页面全在脚本内部，运行期一次都不请求作者服务器（见第六、七节）。
 2. **代码中的规避检测写法**（`特征码字典` 拼接隐藏仓库地址、域名拆写为 `SsSs.nEt`）：属于上游的对抗性设计，改动会破坏节点连通性，因此保留原状。
 3. **合规风险**：此类工具在 Cloudflare ToS 与所在地区法律下都有明确限制，README 的免责声明不构成授权。是否部署、部署在哪，由部署者自行承担。
 
 ## 六、部署提醒
 
-- Workers 体积上限是 **64 MiB（未压缩）**，且没有压缩后上限；当前产物 313 KB，gzip 78 KB。独立内嵌版 1.54 MB，同样远低于上限。
-- 必须绑定 KV（变量名 `KV`），并设置 `ADMIN`，否则只能看到 `noKV` / `noADMIN` 提示页。
+- Workers 体积上限是 **64 MiB（未压缩）**，且没有压缩后上限；基础版 341 KB，独立内嵌版 1.56 MB，都远低于上限。
+- 必须绑定 KV（变量名 `KV`），并设置 `ADMIN`，否则会看到 `noKV` 提示页或直接返回 `Welcome to nginx` 伪装页（这是上游的默认兜底行为，不是故障）。
 
-> 更正：先前说明里写过“gzip 1.05 MB 越过免费版 1 MiB 上限”，那是已经废止的旧限制。剥离 4.6 MB 注释的真实收益是全局作用域的解析开销（启动时间上限 1 秒）、仓库与 clone 体积、以及可读的 diff，而不是撞体积墙。
+```bash
+npm run pack     # 打两个包：embed 生成独立版 → zip → 校验包内文件与源码逐字节一致
+```
+
+| 包 | 体积 | 面板来源 | 用途 |
+| :--- | :--- | :--- | :--- |
+| `dist/edgetunnel-standalone.zip` | 343 KB | **脚本内置，4 个页面全在代码里** | 只要单文件、运行期不取第三方页面的场景 |
+| `dist/edgetunnel-pages.zip` | 88 KB | 运行时按 `PAGES_URL` 或上游地址实时取 | 想继续跟随上游面板的场景 |
+| `dist/edgetunnel-panel.zip` | 253 KB | 自建静态站，供 `PAGES_URL` 指向 | 想自己托管面板但又不愿把 1.5 MB 塞进脚本 |
+
+三个包内都是根目录一个 `_worker.js`，Pages 的“上传资产”直接认。
+
+## 六之二、残余外部请求清单（实测，非估计）
+
+“零依赖”只对面板页面成立。整份程序跑起来仍然会访问下面这些地址，按能否替换分类：
+
+**Worker 侧（你的脚本主动发起）**
+
+| 地址 | 什么时候会发生 | 能否替换 |
+| :--- | :--- | :--- |
+| `${colo}.<拼接域名>` 默认反代 IP | 每个出站连接，未设 `PROXYIP` 时 | 设 `PROXYIP` 即完全替换 |
+| `sub.cmliussss.net`（`SUBAPI`） | 拉 Clash / Sing-box / Surge 订阅且走在线转换时 | 面板配置里换成自建 subconverter |
+| `ip-api.com/batch` | 面板内「优选测速」查归属地 | 有 KV 缓存 7 天；查不到就标“未知”，不影响测速与写入 |
+| `raw.githubusercontent.com/…/CF-CIDR.txt` | 运营商优选取段，失败回落到 `104.16.0.0/13` | 有内置兜底 |
+| `dns.alidns.com` / `sm2.doh.pub` / `cloudflare-dns.com` | 反代目标是域名时的 DoH 解析 | 只在用域名型 `PROXYIP` 时触发 |
+| `api.cloudflare.com` | 面板查账号用量（需先存凭证） | 不用该功能即不触发 |
+| `api.telegram.org` | 开了 TG 通知 | 不配 BotToken 即不触发 |
+
+**浏览器侧（面板页面自己发起，不经过你的 Worker、不带后台凭证）**
+
+| 地址 | 用途 |
+| :--- | :--- |
+| `fonts.googleapis.com` / `fonts.gstatic.com` | 面板字体 |
+| `ipdata.co` | 节点列表里的国家旗帜图 |
+| `api.ipapi.is` / `api.090227.xyz` | 面板自带的 IP 归属地查询 |
+
+这两组都在浏览器里，改它需要动面板 JS 本身；删掉不影响后台管理与订阅生成，只影响对应显示。
+
+**订阅地址是否会变**：不会，只要 `ADMIN`、`KEY`/`SECRET`、`HOST` 三个值不变。订阅令牌是 `MD5(host + UUID)`，UUID 是 `MD5(管理员密码 + 加密秘钥)`，两者都是纯函数，跟代码版本无关。快速订阅地址 `/{KEY}` 同理。
 
 ## 七、后台面板：三种取得方式
 
