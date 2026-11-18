@@ -98,9 +98,16 @@ for (const [序, 令牌] of 令牌们.entries()) {
 			提示.push(`${账号.name} 有 ${项目们.length} 个 Pages 项目，全部列出了，用不到的删掉即可`);
 		}
 		for (const 项目 of 项目们) {
-			const 名 = 项目.name;
-			目标.push({ name: 名, accountId: 账号.id, project: 项目.name, _令牌: 令牌.值 });
 			const 域名 = (项目.domains || []).filter((d) => !d.endsWith('.pages.dev'));
+			目标.push({
+				name: 项目.name,
+				accountId: 账号.id,
+				project: 项目.name,
+				_令牌: 令牌.值,
+				_序: 令牌.序,
+				_域名: 域名.join(', ') || '（仅 pages.dev）',
+				_账号名: 账号.name,
+			});
 			console.log(`   ✓ ${项目.name.padEnd(22)} ${账号.id.slice(0, 8)}…  ${域名.length ? 域名.join(', ') : '（仅 pages.dev）'}`);
 		}
 	}
@@ -124,8 +131,19 @@ for (const t of 目标) {
 	if (次数 > 1) t.name = `${t.name}-${次数}`;
 }
 
-console.log('\n── deploy-targets.json ──');
-const 清单正文 = JSON.stringify(目标.map(({ _令牌, ...其余 }) => 其余), null, 2) + '\n';
+// ── 对应关系总表：哪个账号 / 哪个项目 / 用第几行的 token ──
+const 宽 = (s, n) => String(s).padEnd(n).slice(0, n);
+console.log('\n── 对应关系（token 只显示前 8 位）──');
+console.log(`${宽('#', 4)}${宽('name', 18)}${宽('accountId', 12)}${宽('project', 18)}${宽('token', 14)}${宽('来源', 10)}域名`);
+for (const t of 目标) {
+	console.log(
+		`${宽(目标.indexOf(t) + 1, 4)}${宽(t.name, 18)}${宽(t.accountId.slice(0, 8) + '…', 12)}${宽(t.project, 18)}` +
+			`${宽(t._令牌.slice(0, 8) + '…', 14)}${宽(`第${t._序}行`, 10)}${t._域名}`
+	);
+}
+
+console.log('\n── deploy-targets.json（只含地址，可提交）──');
+const 清单正文 = JSON.stringify(目标.map(({ _令牌, _序, _域名, _账号名, ...其余 }) => 其余), null, 2) + '\n';
 console.log(清单正文);
 
 const 令牌json = {};
@@ -138,4 +156,12 @@ if (写文件) {
 	console.log(`已写入 ${清单文件}（${目标.length} 项）`);
 } else {
 	console.log('加 --write 可直接写入 deploy-targets.json。');
+}
+
+// 本地留一份带 token 的完整对照，方便自己查；文件名已被 .gitignore 忽略
+if (参数.includes('--write-local')) {
+	const 本地 = resolve(根目录, 'deploy-targets.local.json');
+	const 带令牌 = 目标.map((t) => ({ name: t.name, accountId: t.accountId, project: t.project, token: t._令牌 }));
+	writeFileSync(本地, JSON.stringify(带令牌, null, 2) + '\n');
+	console.log(`已写入 ${本地}（含明文 token，已被 .gitignore 忽略，别提交、别外传）`);
 }

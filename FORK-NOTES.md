@@ -327,6 +327,22 @@ npm run discover -- --write # 顺便把结果写进 deploy-targets.json
 
 跨账号同名项目（都叫 `edt666` 那种）会自动加序号区分，否则 `CF_TOKENS` 的键会互相覆盖。token 文件被 git 跟踪时脚本直接拒绝运行。
 
+输出里有一张**对应关系总表**，一眼看清「哪个账号 / 哪个项目 / 第几行的 token」：
+
+```
+#   name              accountId   project           token         来源      域名
+1   edt666            a7e44774…   edt666            cfut_9f8a…    第1行     edt2.myfreedog.de5.net
+2   edt666-2          3f1c02ab…   edt666            cfut_2b75…    第2行     （仅 pages.dev）
+```
+
+想本地留一份带 token 的完整对照，加 `--write-local`，会写 `deploy-targets.local.json`（已在 `.gitignore` 里，脚本也拒绝提交这类文件）：
+
+```bash
+npm run discover -- --write --write-local
+```
+
+**为什么 token 不能直接写进 `deploy-targets.json` 那一列**：这个文件是要提交进仓库的，仓库即使是私有的，GitHub 的 secret scanning 也会扫描并**主动通知 Cloudflare 撤销**泄露的 `cfut_` 令牌；公开仓库更是等于把 12 个账号的钥匙贴出去。所以拆成两份不是洁癖：地址部分进仓库，令牌部分进 secret，靠 `name` 这个字段把两边对上。
+
 **只配了一部分令牌也能跑**：工作流里带 `--skip-missing`，没有令牌的账号会被列出来跳过，其余照常部署。想手动触发某几个，用 Actions 页面的 **Run workflow**，在 `only` 里填 name（逗号分隔）。
 
 **安全约定**：一个账号一个 token，不要用一个能管全部账号的 token —— 那个泄漏了就是全部失守。每个只授 `Account → Cloudflare Pages → Edit`。
