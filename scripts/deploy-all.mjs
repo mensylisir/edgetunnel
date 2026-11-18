@@ -46,6 +46,53 @@ function 退出(码, 消息) {
 	process.exit(码);
 }
 
+/**
+ * 只读 GET 一个项目，同时验证两件事：token 有没有 Pages 权限、project 是否真的存在。
+ *
+ * 不预检的话有两种难查的失败：
+ *   - token 权限不对 → wrangler 抛一大段 Authentication error，看不出是缺 Pages 还是 token 抄错；
+ *   - project 名打错 → 交互模式下 wrangler 会**新建**一个同名项目，域名和订阅地址就变了。
+ * 预检把这两种情况都挡在部署之前。
+ */
+async function 预检(项) {
+	const 地址 = `https://api.cloudflare.com/client/v4/accounts/${项.accountId}/pages/projects/${encodeURIComponent(项.project)}`;
+	let 响应;
+	try {
+		响应 = await fetch(地址, {
+			headers: { Authorization: `Bearer ${项._token}` },
+			signal: AbortSignal.timeout(20000),
+		});
+	} catch (e) {
+		// 网络问题不该阻断部署（CI 里偶发 DNS 抖动），交给 wrangler 自己判断
+		return { 通过: true, 备注: `预检未能联网（${e.message}），直接部署` };
+	}
+	if (响应.ok) return { 通过: true };
+
+	const 正文 = await 响应.text();
+	let 码 = null;
+	let 话 = '';
+	try {
+		const 错 = JSON.parse(正文)?.errors?.[0];
+		码 = 错?.code ?? null;
+		话 = 错?.message ?? '';
+	} catch { }
+
+	if (码 === 8000007) {
+		return { 通过: false, 原因: `该账号下没有项目「${项.project}」（project 名打错？），已阻止部署以免新建项目换掉域名` };
+	}
+	// 9106 = Authentication failed（token 无效或没权限），10000 = Authentication error
+	if ([9106, 10000, 971].includes(码) || /auth|permission|forbidden/i.test(话) || 响应.status === 401 || 响应.status === 403) {
+		return {
+			通过: false,
+			原因: `token 无效或缺少 Pages 权限（需 Account → Cloudflare Pages → Edit），也可能它属于另一个 accountId${话 ? `｜${话}` : ''}`,
+		};
+	}
+	if (响应.status === 404) {
+		return { 通过: false, 原因: `项目「${项.project}」不存在，或 token 无权访问这个账号` };
+	}
+	return { 通过: false, 原因: `预检返回 ${响应.status}：${正文.replace(/\s+/g, ' ').slice(0, 160)}` };
+}
+
 if (!existsSync(产物)) {
 	退出(1, `缺少 ${产物}\n先跑：npm run embed（或 npm run build && npm run mirror && npm run embed）`);
 }
@@ -195,8 +242,24 @@ if (试运行) {
 			`   ${项._号}  account=${项.accountId.slice(0, 8)}…  project=${项.project}  token=${项._token.slice(0, 6)}… (${项._来源})`
 		);
 	}
-	console.log('\n--dry-run：以上配置齐全，未实际部署。');
-	process.exit(0);
+	if (!有开关('check-tokens')) {
+		console.log('\n--dry-run：以上配置齐全，未实际部署。');
+		console.log('想顺便验证每个 token 的 Pages 权限和 project 是否存在，加 --check-tokens。');
+		process.exit(0);
+	}
+
+	console.log('\n逐个验证 token 与 project（只读请求，不会部署）：');
+	let 不通 = 0;
+	for (const 项 of 待部署) {
+		const 结果 = await 预检(项);
+		if (结果.通过) console.log(`   ✓ ${项._号}${结果.备注 ? `（${结果.备注}）` : ''}`);
+		else {
+			不通++;
+			console.log(`   ✗ ${项._号}：${结果.原因}`);
+		}
+	}
+	console.log(不通 ? `\n${不通} 个目标未通过预检，先修好令牌或 project 名再部署。` : '\n全部通过，可以去掉 --dry-run 正式部署。');
+	process.exit(不通 ? 1 : 0);
 }
 
 // ── 部署：在临时目录里跑，避免仓库根目录那份 Workers 用的 wrangler.toml 被误读 ──
@@ -211,6 +274,16 @@ const 部署前缀 = 有全局wrangler ? [] : ['--yes', 'wrangler@4'];
 const 结果 = [];
 for (const 项 of 待部署) {
 	process.stdout.write(`→ ${项._号} … `);
+
+	const 检查 = await 预检(项);
+	if (!检查.通过) {
+		console.log('未部署');
+		console.error(`    ${检查.原因}`);
+		结果.push({ 号: 项._号, 成功: false });
+		if (项 !== 待部署[待部署.length - 1]) spawnSync('sleep', ['1']);
+		continue;
+	}
+
 	const 子进程 = spawnSync(
 		部署命令,
 		[...部署前缀, 'pages', 'deploy', '.', '--project-name', 项.project, '--commit-dirty=true'],

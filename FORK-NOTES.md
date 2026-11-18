@@ -250,14 +250,23 @@ deploy  取回产物 → 按 deploy-targets.json 逐账号 wrangler pages deploy
 
 Token 怎么建：My Profile → API Tokens（`dash.cloudflare.com/profile/api-tokens`）→ **Create Custom Token** → 权限选 `Account` + `Cloudflare Pages` + `Edit`，资源选对应账户。**只显示一次**，建完立刻复制。
 
-推之前先在本地验证一次，省得 CI 跑完才发现权限不对：
+**预置模板「Edit Cloudflare Workers」能不能用？** 说法是矛盾的：Cloudflare 自己的 Pages API 文档把该模板列为一种建法，但另外两处的实战记录都写明该模板**不含** `Cloudflare Pages`，用它 `pages deploy` 会得到 `Authentication error [code: 10000]` 或 `Authentication failed (status: 400)`。而且它的权限范围大得多（Workers Scripts、KV、R2、Zone Workers Routes 全套），对 12 个账号来说泄漏面明显更大。**结论：用自定义，只勾 `Cloudflare Pages` + `Edit`。** 真想知道手上的 token 行不行，别猜，跑下面这条。
+
+推之前先在本地验证一次，省得 CI 跑完才发现权限不对。脚本自带只读预检，一次把 12 个 token 全验完，不部署任何东西：
 
 ```bash
-curl -s "https://api.cloudflare.com/client/v4/accounts/<ACCOUNT_ID>/pages/projects/<项目名>" \
-  -H "Authorization: Bearer <API_TOKEN>" | head -c 300
+npm run deploy:all -- --dry-run --check-tokens
 ```
 
-返回项目 JSON 说明 token 有 Pages 权限；返回 `Authentication error` 就是权限没给对（`/user/tokens/verify` 只能证明 token 有效，证明不了它有 Pages 权限）。
+它会逐个 `GET /accounts/{id}/pages/projects/{project}`，把三种失败分开报：
+
+| 现象 | 含义 |
+| :--- | :--- |
+| `token 无效或缺少 Pages 权限` | token 建错、漏勾 Pages、或它属于另一个 accountId |
+| `该账号下没有项目「xxx」` | project 名打错（预检会**阻止**部署，不会新建项目换掉域名） |
+| `预检返回 400/403 …` 附原文 | 其他异常，按原文排 |
+
+正式部署时同样会先预检再动手，所以 `project` 名写错不再有「另建一个项目、域名和订阅地址一起变」的风险 —— 这条以前只是文档里的警告，现在是脚本里的硬闸门。
 
 **为什么不用 Dashboard 里的 “Connect to Git”**：Direct Upload 类型（拖 zip 创建）的 Pages 项目**不支持事后接入 Git**，官方明确只能新建项目再迁移。新建项目会换掉 `pages.dev` 域名；自定义域名 `edt2.myfreedog.de5.net` 虽然可以搬迁过去、订阅 token 也因此保住，但需要先解绑再绑定、中间有一段时间不可用，不值得为“自动”承担这个风险。用 Actions 推到同一项目，效果一样且不换域名。
 
@@ -295,14 +304,14 @@ curl -s "https://api.cloudflare.com/client/v4/accounts/<ACCOUNT_ID>/pages/projec
 
 **三个必须注意的点**：
 
-1. **`project` 必须和线上项目名逐字一致。** 写错不会「更新」，而是另建一个项目，域名和订阅地址都变——这是整套东西唯一能造成实质损害的地方。
+1. **`project` 必须和线上项目名逐字一致。** 写错本来不是「更新」而是另建一个项目（域名和订阅地址都变）；现在脚本会在动手前 `GET` 一次项目，找不到就拒绝部署并报 `该账号下没有项目「xxx」`，所以这个风险已经被闸门挡住，但仍建议先核对一遍名字。
 2. **只换代码，不碰配置。** 环境变量（`ADMIN`、`PROXYIP`…）和 KV 绑定都是项目级的，部署不会改动它们；订阅地址因此也不变。
 3. **`deploy-targets.json` 里永远不要写 token。** 脚本会 `git ls-files` 检查：文件已被跟踪且含明文 token 时直接拒绝执行（`--force` 可跳过，但不建议）。本地想存明文 token 就另存 `deploy-targets.local.json`（已被 `.gitignore` 忽略）。
 
 **本地没有 Actions、想手动推一次**（可选）：
 
 ```bash
-CF_TOKENS='{"edt666":"cfut_xxx"}' npm run deploy:all -- --dry-run   # 先校验
+CF_TOKENS='{"edt666":"cfut_xxx"}' npm run deploy:all -- --dry-run --check-tokens   # 校验配置 + 验 token 权限，不部署
 CF_TOKENS='{"edt666":"cfut_xxx"}' npm run deploy:all
 ```
 
