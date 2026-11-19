@@ -99,7 +99,13 @@ const 用例 = [
 ];
 
 const 上游路径 = 取上游文件();
-const 当前路径 = join(根目录, 'dist', 'standalone', '_worker.js');
+// 与 compat-uuid.mjs 一致：优先独立版，未 embed 时回退到 build 产物
+const 当前路径 = (() => {
+	for (const 路径 of [join(根目录, 'dist', 'standalone', '_worker.js'), join(根目录, '_worker.js')]) {
+		if (existsSync(路径)) return 路径;
+	}
+	throw new Error('取不到当前版本：先跑 npm run build（或 npm run build && npm run mirror && npm run embed）');
+})();
 const 上游模块 = (await import(pathToFileURL(上游路径).href)).default;
 const 当前模块 = (await import(pathToFileURL(当前路径).href)).default;
 

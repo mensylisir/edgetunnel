@@ -47,17 +47,20 @@ jobs:
           npm run check
           npm test
 
-      - name: 订阅地址兼容性（上游原版 A/B + 变量组合矩阵）
-        run: |
-          npm run compat
-          npm run compat:matrix
-
       # 面板镜像与内嵌依赖外部站点 https://edt-pages.github.io。
       # 它不可用时会在这里失败，后面的部署不会执行，线上保留上一版。
       - name: 镜像面板并内嵌为独立版
         run: |
           npm run mirror
           npm run embed
+
+      # compat 比对的对象是 dist/standalone/_worker.js，也就是上一步的产物。
+      # 顺序不能颠倒：它曾排在上一步之前，干净环境里必然报「当前版本 的脚本不存在」，
+      # 而本地因为残留 dist 反而看不出来。
+      - name: 订阅地址兼容性（上游原版 A/B + 变量组合矩阵）
+        run: |
+          npm run compat
+          npm run compat:matrix
 
       - name: 上传产物
         uses: actions/upload-artifact@v4

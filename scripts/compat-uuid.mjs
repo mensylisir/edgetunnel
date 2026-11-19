@@ -74,9 +74,22 @@ function 取上游文件() {
 	return 目标;
 }
 
+/**
+ * 当前版本：优先取内嵌面板的独立版（最终部署物），还没跑 embed 时回退到 npm run build 的产物。
+ * 以前这里硬编码 dist/standalone，而该文件要到 workflow 的下一步才生成，
+ * 导致 CI 里 compat 必然报「脚本不存在」——本地因为残留产物反而看不出问题。
+ */
+function 取当前文件() {
+	const 候选 = [join(根目录, 'dist', 'standalone', '_worker.js'), join(根目录, '_worker.js')];
+	for (const 路径 of 候选) {
+		if (existsSync(路径)) return 路径;
+	}
+	return 候选[0]; // 都不存在时交给下面的检查报错，信息更具体
+}
+
 const 用例 = [
 	['上游原版', 取上游文件()],
-	['当前版本', join(根目录, 'dist', 'standalone', '_worker.js')]
+	['当前版本', 取当前文件()]
 ];
 
 const 摘要 = 双MD5(合成密码 + '勿动此默认密钥，有需求请自行通过添加变量KEY进行修改');
