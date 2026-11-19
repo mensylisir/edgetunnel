@@ -74,6 +74,12 @@ jobs:
     name: 部署到 Cloudflare Pages
     needs: build
     runs-on: ubuntu-latest
+    # Environment secret 只有在此处声明同名 environment 时才会注入。
+    # 不声明的话，即使 Settings → Environment secrets 里配了 CF_TOKENS，
+    # secrets.CF_TOKENS 依然是空字符串 —— 表现为「明明配了却提示没有部署令牌」。
+    # 用仓库级 secret（Settings → Secrets and variables → Actions → Repository secrets）
+    # 也照样能读到：环境内没有同名 secret 时会回退到仓库级。
+    environment: CF_TOKENS
 
     steps:
       # 只读清单和脚本，不跑构建，所以不需要完整历史

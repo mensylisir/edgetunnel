@@ -154,9 +154,18 @@ function 由令牌表生成清单() {
 	return 结果;
 }
 
-// ── 清单来源：优先 deploy-targets.json；不存在则用 CF_TOKENS 里的完整条目 ────
+// ── 清单来源 ────────────────────────────────────────────────────────────────
+// 1) CF_TOKENS 里存在同时带 accountId 与 project 的完整条目 → 以它为准，一个 secret 就是全部真相
+// 2) 否则读 deploy-targets.json，CF_TOKENS 只负责提供令牌（方案 B）
+// 判据是「secret 里的值是不是对象」：方案 B 写的是字符串，不会被误判。
+const 内联清单 = 由令牌表生成清单();
 let 清单;
-if (existsSync(配置文件)) {
+if (内联清单.length) {
+	清单 = 内联清单;
+	if (existsSync(配置文件)) {
+		console.log(`提示：CF_TOKENS 里有 ${内联清单.length} 条完整条目，本次以它为准，忽略 ${配置文件}。`);
+	}
+} else if (existsSync(配置文件)) {
 	try {
 		清单 = JSON.parse(readFileSync(配置文件, 'utf8'));
 	} catch (e) {
@@ -164,16 +173,13 @@ if (existsSync(配置文件)) {
 	}
 	if (!Array.isArray(清单) || 清单.length === 0) 退出(1, '清单应为非空数组，每项一个账号');
 } else {
-	清单 = 由令牌表生成清单();
-	if (!清单.length) {
-		退出(
-			1,
-			`找不到清单文件 ${配置文件}，CF_TOKENS 里也没有自带 accountId 与 project 的条目。\n` +
-				'任选一条路：\n' +
-				'  1) 只用一个 secret：npm run discover -- --write-secret，把生成的整段 JSON 贴进 CF_TOKENS\n' +
-				'  2) 仍用 deploy-targets.json 放账号与项目，CF_TOKENS 只放 {"名称":"令牌"}'
-		);
-	}
+	退出(
+		1,
+		`找不到清单文件 ${配置文件}，CF_TOKENS 里也没有自带 accountId 与 project 的条目。\n` +
+			'任选一条路：\n' +
+			'  1) 只用一个 secret：npm run discover -- --write-secret，把生成的整段 JSON 贴进 CF_TOKENS\n' +
+			'  2) 仍用 deploy-targets.json 放账号与项目，CF_TOKENS 只放 {"名称":"令牌"}'
+	);
 }
 
 /**
@@ -287,14 +293,34 @@ if (待部署.length === 0) {
 	退出(1, 跳过.length ? '没有可部署的目标：所有项都缺令牌' : '没有可部署的目标（检查清单或 --only 过滤）');
 }
 
-// 有配置错误却没开 --skip-missing：说明清单不完整，不能静悄悄只部署一部分
-if (配置错误.length && !跳过缺失) {
-	退出(1, `清单里有 ${配置错误.length} 项配置不完整，未部署任何东西。\n` +
-		'补齐上面的令牌，或在 CI 里加 --skip-missing 明确表示"缺令牌的项可以跳过"。');
+// 配置写错（name / accountId / project）一律失败，--skip-missing 只容忍「没有令牌」。
+// 否则 accountId 抄错会被当成缺令牌跳过，CI 一路绿灯，实际少推一个账号。
+if (配置错误.length) {
+	退出(
+		1,
+		`清单里有 ${配置错误.length} 项配置有误，未部署任何东西。\n` +
+			'--skip-missing 只跳过「没有令牌」的项，不会跳过写错的字段（accountId 必须是完整 32 位十六进制）。'
+	);
 }
 
 console.log(`产物：${产物}（${(readFileSync(产物).length / 1024 / 1024).toFixed(2)} MB）`);
 console.log(`目标：${待部署.length} 个账号\n`);
+
+// GitHub Actions 里把清单写成 annotation：run 页面顶部直接可见，
+// 不必展开日志（日志下载接口要仓库 admin 权限，第三方看不到）。
+function 注记(级别, 标题, 正文) {
+	if (process.env.GITHUB_ACTIONS !== 'true') return;
+	const 转义 = (s) => String(s).replace(/%/g, '%25').replace(/\r/g, '%0D').replace(/\n/g, '%0A');
+	console.log(`::${级别} title=${转义(标题)}::${转义(正文)}`);
+}
+
+注记(
+	'notice',
+	'部署清单',
+	`${待部署.length} 个账号：${待部署.map((项) => 项._号).join('、')}｜清单来源：${
+		existsSync(配置文件) ? 'deploy-targets.json' : 'CF_TOKENS 内嵌'
+	}`
+);
 
 if (试运行) {
 	for (const 项 of 待部署) {
@@ -376,5 +402,7 @@ const 失败 = 结果.filter((r) => !r.成功);
 console.log(`\n完成：成功 ${结果.length - 失败.length} / 共 ${结果.length}` + (跳过.length ? `，跳过 ${跳过.length}` : ''));
 if (失败.length) {
 	console.error('失败：' + 失败.map((f) => f.号).join('、'));
+	注记('error', '部署失败', `${失败.length} 个账号部署失败：${失败.map((f) => f.号).join('、')}`);
 	process.exit(1);
 }
+注记('notice', '部署完成', `成功 ${结果.length} 个账号：${结果.map((r) => r.号).join('、')}`);

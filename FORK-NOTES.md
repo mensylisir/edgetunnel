@@ -305,9 +305,15 @@ npm run deploy:all -- --dry-run --check-tokens
 }
 ```
 
-两种写法可以混：清单文件存在时以文件为准，不存在就把 secret 里自带 `accountId` + `project` 的条目当作清单。这样账号、项目、令牌三者都在同一个地方，不存在"两份清单要对齐、错位"的问题。
+两种写法可以混，判据是「secret 里的值是不是对象」：值写成对象且带 `accountId` + `project` 的条目会成为清单，此时 `deploy-targets.json` 被忽略（不用删，文件在也不影响）；值写成字符串时仍以 `deploy-targets.json` 为清单。这样账号、项目、令牌三者都在同一个地方，不存在"两份清单要对齐、错位"的问题。
 
 代价只有一个：secret 存下后**不可读回**，改任何一个 token 都得把整段 JSON 重贴一遍。账号少时推荐这种；账号多、又经常换 token 时，方案 B（地址入库 + 令牌入 secret）更省事。
+
+**secret 建在哪一层很关键。** 仓库 `Settings → Secrets and variables → Actions` 里有两个标签，都能建 `CF_TOKENS`，但只有 Secrets 标签下的 **Repository secret** 会被自动注入：
+
+- **Repository secrets**（推荐）：workflow 直接读得到，无需额外声明
+- **Environment secrets**：必须在该 job 上写 `environment: <环境名>` 才会注入。不写的话 `secrets.CF_TOKENS` 是空字符串，表现为"明明配了却提示没有部署令牌"。`deploy.yml` 的 deploy job 已声明 `environment: CF_TOKENS`，所以放在名为 `CF_TOKENS` 的环境里也能用；环境内没有同名 secret 时会回退到仓库级
+- **Variables**：这是 `vars.CF_TOKENS`，和 `secrets.*` 完全两套，配在这里等于没配
 
 **12 个账号其实可能只需要 1 个 token**：建 token 时 Account Resources 选 `Include → All accounts`，这一个 token 就能推全你登录下的所有账号。这时 `CF_TOKENS` 只写一条通配：
 
@@ -360,6 +366,8 @@ npm run discover -- --write --write-local
 **为什么 token 不能直接写进 `deploy-targets.json` 那一列**：这个文件是要提交进仓库的，仓库即使是私有的，GitHub 的 secret scanning 也会扫描并**主动通知 Cloudflare 撤销**泄露的 `cfut_` 令牌；公开仓库更是等于把 12 个账号的钥匙贴出去。所以拆成两份不是洁癖：地址部分进仓库，令牌部分进 secret，靠 `name` 这个字段把两边对上。
 
 **只配了一部分令牌也能跑**：工作流里带 `--skip-missing`，没有令牌的账号会被列出来跳过，其余照常部署。想手动触发某几个，用 Actions 页面的 **Run workflow**，在 `only` 里填 name（逗号分隔）。
+
+注意 `--skip-missing` 只跳过「没有令牌」的项。`accountId` 少几位、`project` 拼错这类**写错**不会被跳过，而会让整个 job 失败——否则抄错一个 accountId 会被当成"缺令牌"，CI 绿灯而实际少推一个账号。
 
 **安全约定**：一个账号一个 token，不要用一个能管全部账号的 token —— 那个泄漏了就是全部失守。每个只授 `Account → Cloudflare Pages → Edit`。
 
