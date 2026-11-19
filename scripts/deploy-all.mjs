@@ -408,8 +408,9 @@ for (const 项 of 待部署) {
 			.filter((行) => /error|Error|Authentication|forbidden|not found|permission/i.test(行))
 			.slice(0, 6);
 		console.log(关键.length ? 关键.map((l) => '    ' + l.trim()).join('\n') : 输出.slice(-600));
-		// 同步写进注解：CI 日志下载接口要仓库 admin 权限，注解是唯一不登录也能读到原因的渠道
-		注记('error', `部署失败 ${项._号}`, (关键.length ? 关键.join(' ') : 输出.slice(-600)).slice(0, 900));
+		// 注解里必须带输出尾部：wrangler 把真正的原因（HTTP 状态、code、body）
+		// 打在那行 [ERROR] 之后，只抓含 error 的行会把最有用的一段丢掉。
+		注记('error', `部署失败 ${项._号}`, `${输出.slice(-1200)}`);
 	}
 	结果.push({ 号: 项._号, 成功 });
 	// 账号之间稍作间隔，避免触发 API 速率限制
