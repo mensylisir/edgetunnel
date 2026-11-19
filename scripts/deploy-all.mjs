@@ -394,7 +394,15 @@ for (const 项 of 待部署) {
 		{
 			cwd: 临时,
 			encoding: 'utf8',
-			env: { ...process.env, CLOUDFLARE_API_TOKEN: 项._token, CLOUDFLARE_ACCOUNT_ID: 项.accountId },
+			maxBuffer: 64 * 1024 * 1024,
+			// wrangler 4 失败时只吐一行 "A request to the Cloudflare API (…) failed."，
+			// HTTP 状态与 errors[].code 全被吞掉。debug 日志才带完整的请求与响应体。
+			env: {
+				...process.env,
+				CLOUDFLARE_API_TOKEN: 项._token,
+				CLOUDFLARE_ACCOUNT_ID: 项.accountId,
+				WRANGLER_LOG: 'debug',
+			},
 		}
 	);
 	const 输出 = `${子进程.stdout || ''}${子进程.stderr || ''}`;
@@ -408,9 +416,16 @@ for (const 项 of 待部署) {
 			.filter((行) => /error|Error|Authentication|forbidden|not found|permission/i.test(行))
 			.slice(0, 6);
 		console.log(关键.length ? 关键.map((l) => '    ' + l.trim()).join('\n') : 输出.slice(-600));
-		// 注解里必须带输出尾部：wrangler 把真正的原因（HTTP 状态、code、body）
-		// 打在那行 [ERROR] 之后，只抓含 error 的行会把最有用的一段丢掉。
-		注记('error', `部署失败 ${项._号}`, `${输出.slice(-1200)}`);
+		// 注解里必须带 HTTP 细节：debug 日志中有 status / errors[].code，
+		// 这是区分「缺 Edit 权限」「项目不存在」「被限流」的唯一线索。
+		const 细节 = 输出
+			.split('\n')
+			.filter((行) => /"errors"|errors:|code:|status|Unauthorized|Forbidden|429|403|401|500/i.test(行))
+			.slice(-10)
+			.join(' ')
+			.replace(/\s+/g, ' ')
+			.slice(0, 1300);
+		注记('error', `部署失败 ${项._号}`, 细节 || `输出尾部：${输出.slice(-1000)}`);
 	}
 	结果.push({ 号: 项._号, 成功 });
 	// 账号之间稍作间隔，避免触发 API 速率限制
