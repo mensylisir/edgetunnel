@@ -395,13 +395,14 @@ for (const 项 of 待部署) {
 			cwd: 临时,
 			encoding: 'utf8',
 			maxBuffer: 64 * 1024 * 1024,
+			// 排查时用 WRANGLER_LOG=debug 跑（会被 process.env 自然透传）：
 			// wrangler 4 失败时只吐一行 "A request to the Cloudflare API (…) failed."，
-			// HTTP 状态与 errors[].code 全被吞掉。debug 日志才带完整的请求与响应体。
+			// HTTP 状态与 errors[].code 仅在 debug 日志里。默认不开，否则 12 个账号的
+			// 日志会膨胀到几十 MB。
 			env: {
 				...process.env,
 				CLOUDFLARE_API_TOKEN: 项._token,
 				CLOUDFLARE_ACCOUNT_ID: 项.accountId,
-				WRANGLER_LOG: 'debug',
 			},
 		}
 	);
