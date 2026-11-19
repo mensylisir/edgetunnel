@@ -174,7 +174,9 @@ if (内联清单.length) {
 	清单 = 内联清单;
 	清单来源 = 'CF_TOKENS';
 	if (existsSync(配置文件)) {
-		console.log(`提示：CF_TOKENS 里有 ${内联清单.length} 条完整条目，本次以它为准，忽略 ${配置文件}。`);
+		// 走 stderr：--list-json 模式下 stdout 只能是那行 JSON，否则 CI 里
+		// $(node ...) 会把提示一起captured 进去，fromJSON 直接解析失败。
+		console.error(`提示：CF_TOKENS 里有 ${内联清单.length} 条完整条目，本次以它为准，忽略 ${配置文件}。`);
 	}
 } else if (existsSync(配置文件)) {
 	try {
@@ -199,6 +201,19 @@ if (内联清单.length) {
 			'  1) 只用一个 secret：npm run discover -- --write-secret，把生成的整段 JSON 贴进 CF_TOKENS\n' +
 			'  2) 仍用 deploy-targets.json 放账号与项目，CF_TOKENS 只放 {"名称":"令牌"}'
 	);
+}
+
+// 供 CI 生成 matrix 用：只输出一行 JSON 名字数组，不带任何其他内容。
+// 放在配置校验与预检之前 —— 这一步只读清单，一个 Cloudflare 请求都不发。
+if (有开关('list-json')) {
+	const 范围 = 取值('only');
+	let 名们 = 清单.map((项) => 项.name).filter(Boolean);
+	if (范围) {
+		const 要 = 范围.split(',').map((s) => s.trim()).filter(Boolean);
+		名们 = 名们.filter((n) => 要.includes(n));
+	}
+	process.stdout.write(JSON.stringify(名们) + '\n');
+	process.exit(0);
 }
 
 /**

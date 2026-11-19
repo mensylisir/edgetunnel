@@ -16,6 +16,10 @@ on:
         description: "只部署这些目标（填 deploy-targets.json 里的 name，逗号分隔；留空=全部）"
         required: false
         default: ""
+      delay_minutes:
+        description: "相邻两个 job 之间随机等待的分钟数（0=不等待，紧接着跑下一个）"
+        required: false
+        default: "0"
   release:
     types: [published]
   push:
@@ -75,17 +79,68 @@ jobs:
           retention-days: 3
           if-no-files-found: error
 
-  deploy:
-    name: 部署到 Cloudflare Pages
-    # 最后一道闸：即使 workflow 被别的路径触发（例如有人改了触发条件后 push），
-    # 也只有手动 / Release / deploy-* 标签才真正去调 Cloudflare。
-    # 其余情况整个 job 直接跳过，一个部署请求都不会发出去。
+  # 先把目标名展开成数组，给下面的 matrix 用。
+  # 单独开一个 job 是因为 matrix 只能读 needs 的 outputs，读不到 secret，
+  # 而清单要么在 CF_TOKENS 里、要么在 deploy-targets.json 里。
+  # 这一步只解析清单，不发任何 Cloudflare 请求。
+  plan:
+    name: 生成部署矩阵
     if: >-
       github.event_name == 'workflow_dispatch' ||
       github.event_name == 'release' ||
       startsWith(github.ref, 'refs/tags/deploy-')
     needs: build
     runs-on: ubuntu-latest
+    environment: CF_TOKENS
+    outputs:
+      targets: ${{ steps.list.outputs.targets }}
+      skip: ${{ steps.list.outputs.skip }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: 列出目标
+        id: list
+        env:
+          CF_TOKENS: ${{ secrets.CF_TOKENS }}
+          ONLY: ${{ github.event.inputs.only }}
+        run: |
+          set -euo pipefail
+          if [ -z "${CF_TOKENS:-}" ]; then
+            echo "::warning::没有配置 CF_TOKENS，本次不部署。"
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+            echo "targets=[]" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          if [ -n "${ONLY:-}" ]; then
+            T=$(node scripts/deploy-all.mjs --list-json --only="$ONLY")
+          else
+            T=$(node scripts/deploy-all.mjs --list-json)
+          fi
+          echo "targets=$T" >> "$GITHUB_OUTPUT"
+          echo "目标：$T"
+
+  deploy:
+    # 每个账号一个独立 job：日志、重跑、耗时都分开，
+    # 一个账号失败不会把后面的人和它搅在一起（fail-fast: false）。
+    name: 部署 ${{ matrix.target }}
+    # 最后一道闸：即使 workflow 被别的路径触发（例如有人改了触发条件后 push），
+    # 也只有手动 / Release / deploy-* 标签才真正去调 Cloudflare。
+    if: needs.plan.result == 'success' && needs.plan.outputs.skip != 'true'
+    needs: [build, plan]
+    runs-on: ubuntu-latest
+    # 一次只跑一个，前一个结束才启动下一个 —— 12 个 job 排队，不会并发打出去。
+    strategy:
+      max-parallel: 1
+      fail-fast: false
+      matrix:
+        target: ${{ fromJSON(needs.plan.outputs.targets || '[]') }}
     # Environment secret 只有在此处声明同名 environment 时才会注入。
     # 不声明的话，即使 Settings → Environment secrets 里配了 CF_TOKENS，
     # secrets.CF_TOKENS 依然是空字符串 —— 表现为「明明配了却提示没有部署令牌」。
@@ -94,6 +149,26 @@ jobs:
     environment: CF_TOKENS
 
     steps:
+      # GitHub 没有「延迟调度」这个原语：job 只有「排队」或「并行」两种关系。
+      # 要让相邻两个 job 之间隔一段时间，只能让 runner 在这段时间里空等 ——
+      # 没有别的办法。默认 0 就是不等待，上一个结束立刻下一个。
+      - name: 错峰等待（可选）
+        env:
+          DELAY: ${{ inputs.delay_minutes }}
+        run: |
+          set -euo pipefail
+          if ! [[ "${DELAY:-0}" =~ ^[0-9]+$ ]] || [ "${DELAY:-0}" -eq 0 ]; then
+            echo "delay_minutes=0，不等待，直接开始。"
+            exit 0
+          fi
+          # 在 [0.6D, 1.4D] 之间取随机，避免每次都卡在同一个分钟数上
+          BASE=$(( DELAY * 60 ))
+          LOW=$(( BASE * 6 / 10 ))
+          HIGH=$(( BASE * 14 / 10 ))
+          WAIT=$(( LOW + RANDOM % (HIGH - LOW + 1) ))
+          echo "本 job 目标：${{ matrix.target }}，等待 $((WAIT/60)) 分 $((WAIT%60)) 秒后开始"
+          sleep "$WAIT"
+
       # 只读清单和脚本，不跑构建，所以不需要完整历史
       - name: Checkout
         uses: actions/checkout@v6
@@ -103,7 +178,7 @@ jobs:
         with:
           node-version: 22
 
-      # 全局装一次，多账号部署时不必每个都走 npx 解析。
+      # 每个 job 只部署一个目标，所以这一步是全局装，只算一次 npx 解析开销。
       # 装失败也不终止：脚本检测不到全局 wrangler 时会自动回退到 npx。
       - name: 安装 wrangler
         run: npm install -g wrangler@4 || echo "全局安装失败，部署时回退到 npx"
@@ -114,35 +189,16 @@ jobs:
           name: worker
           path: dist/standalone
 
-      - name: 校验部署清单
-        id: check
+      - name: 部署 ${{ matrix.target }}
         env:
           CF_TOKENS: ${{ secrets.CF_TOKENS }}
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          # 走环境变量而不是直接插进命令行：账号名里若有空格或引号不会破坏命令
+          TARGET: ${{ matrix.target }}
         run: |
           set -euo pipefail
-          if [ -z "${CF_TOKENS:-}" ] && [ -z "${CLOUDFLARE_API_TOKEN:-}" ]; then
-            echo "::warning::还没有配置部署令牌，本次只构建不部署。到 Settings → Secrets and variables → Actions 添加 CF_TOKENS（一个 JSON 装全部账号），然后重新运行本工作流即可。"
-            echo "skip=true" >> "$GITHUB_OUTPUT"
-            exit 0
-          fi
-          node scripts/deploy-all.mjs --dry-run --skip-missing
-
-      - name: 部署
-        if: steps.check.outputs.skip != 'true'
-        env:
-          CF_TOKENS: ${{ secrets.CF_TOKENS }}
-          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
-          ONLY: ${{ github.event.inputs.only }}
-        run: |
-          set -euo pipefail
-          if [ -n "${ONLY:-}" ]; then
-            node scripts/deploy-all.mjs --skip-missing --only="$ONLY"
-          else
-            node scripts/deploy-all.mjs --skip-missing
-          fi
+          node scripts/deploy-all.mjs --only="$TARGET"
 
   # 把构建出的独立版打成 zip 发到 Releases，方便直接从 GitHub 下载真包，
   # 不必再拖仓库里那份未内嵌面板的 _worker.js。
