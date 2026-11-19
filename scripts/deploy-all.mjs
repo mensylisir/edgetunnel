@@ -116,6 +116,15 @@ if (process.env.CF_TOKENS) {
 	if (!令牌表 || typeof 令牌表 !== 'object' || Array.isArray(令牌表)) {
 		退出(1, 'CF_TOKENS 应为 {"名称": "令牌"} 或 {"名称": {"token": …, "accountId": …, "project": …}} 形式的对象');
 	}
+	// 从网页复制粘贴时键名极易带上首尾空格（" myproject22"），
+	// 不清掉就会被当成另一个项目名，预检 404 后整项判失败。这里统一清一遍。
+	const 规范 = {};
+	for (const [键, 值] of Object.entries(令牌表)) {
+		const 净键 = 键.trim();
+		if (!净键) continue;
+		规范[净键] = 值;
+	}
+	令牌表 = 规范;
 }
 
 /** 从字符串或 {token: …} 对象里取出令牌 */
@@ -136,8 +145,8 @@ function 取内联项(值) {
 	if (!值.accountId || !值.project) return null;
 	return {
 		token: token.trim(),
-		accountId: String(值.accountId),
-		project: String(值.project),
+		accountId: String(值.accountId).trim(),
+		project: String(值.project).trim(),
 		domains: 值.domains,
 	};
 }
@@ -160,8 +169,10 @@ function 由令牌表生成清单() {
 // 判据是「secret 里的值是不是对象」：方案 B 写的是字符串，不会被误判。
 const 内联清单 = 由令牌表生成清单();
 let 清单;
+let 清单来源;
 if (内联清单.length) {
 	清单 = 内联清单;
+	清单来源 = 'CF_TOKENS';
 	if (existsSync(配置文件)) {
 		console.log(`提示：CF_TOKENS 里有 ${内联清单.length} 条完整条目，本次以它为准，忽略 ${配置文件}。`);
 	}
@@ -172,6 +183,14 @@ if (内联清单.length) {
 		退出(1, `${配置文件} 不是合法 JSON：${e.message}`);
 	}
 	if (!Array.isArray(清单) || 清单.length === 0) 退出(1, '清单应为非空数组，每项一个账号');
+	// 手写的清单同样可能带空格，字段统一清一遍
+	清单 = 清单.map((项) => ({
+		...项,
+		name: typeof 项.name === 'string' ? 项.name.trim() : 项.name,
+		accountId: typeof 项.accountId === 'string' ? 项.accountId.trim() : 项.accountId,
+		project: typeof 项.project === 'string' ? 项.project.trim() : 项.project,
+	}));
+	清单来源 = 配置文件.split('/').pop();
 } else {
 	退出(
 		1,
@@ -317,9 +336,7 @@ function 注记(级别, 标题, 正文) {
 注记(
 	'notice',
 	'部署清单',
-	`${待部署.length} 个账号：${待部署.map((项) => 项._号).join('、')}｜清单来源：${
-		existsSync(配置文件) ? 'deploy-targets.json' : 'CF_TOKENS 内嵌'
-	}`
+	`${待部署.length} 个账号：${待部署.map((项) => 项._号).join('、')}｜清单来源：${清单来源}`
 );
 
 if (试运行) {
@@ -402,7 +419,7 @@ const 失败 = 结果.filter((r) => !r.成功);
 console.log(`\n完成：成功 ${结果.length - 失败.length} / 共 ${结果.length}` + (跳过.length ? `，跳过 ${跳过.length}` : ''));
 if (失败.length) {
 	console.error('失败：' + 失败.map((f) => f.号).join('、'));
-	注记('error', '部署失败', `${失败.length} 个账号部署失败：${失败.map((f) => f.号).join('、')}`);
+	注记('error', '部署未完成', `${失败.length} 个账号未部署成功：${失败.map((f) => f.号).join('、')}（含预检未通过的项，具体原因见日志）`);
 	process.exit(1);
 }
 注记('notice', '部署完成', `成功 ${结果.length} 个账号：${结果.map((r) => r.号).join('、')}`);
