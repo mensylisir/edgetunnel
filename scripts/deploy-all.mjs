@@ -382,6 +382,7 @@ for (const 项 of 待部署) {
 	if (!检查.通过) {
 		console.log('未部署');
 		console.error(`    ${检查.原因}`);
+		注记('error', `未部署 ${项._号}`, 检查.原因);
 		结果.push({ 号: 项._号, 成功: false });
 		if (项 !== 待部署[待部署.length - 1]) spawnSync('sleep', ['1']);
 		continue;
@@ -407,6 +408,8 @@ for (const 项 of 待部署) {
 			.filter((行) => /error|Error|Authentication|forbidden|not found|permission/i.test(行))
 			.slice(0, 6);
 		console.log(关键.length ? 关键.map((l) => '    ' + l.trim()).join('\n') : 输出.slice(-600));
+		// 同步写进注解：CI 日志下载接口要仓库 admin 权限，注解是唯一不登录也能读到原因的渠道
+		注记('error', `部署失败 ${项._号}`, (关键.length ? 关键.join(' ') : 输出.slice(-600)).slice(0, 900));
 	}
 	结果.push({ 号: 项._号, 成功 });
 	// 账号之间稍作间隔，避免触发 API 速率限制
