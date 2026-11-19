@@ -5,17 +5,22 @@ permissions:
   contents: write
 
 on:
-  push:
-    branches:
-      - main
-    paths-ignore:
-      - "**.md"
+  # 部署只在明确要求时发生：手动触发、发 Release、或打 deploy-* 标签。
+  #
+  # 这里原来是 push: branches: [main]，改任何非 .md 文件（脚本、清单、workflow 本身）
+  # 都会把全部账号重新部署一遍。单账号时这算"自动发布"；12 个账号时，改一行脚本
+  # 等于朝 12 个目标各打一轮部署请求，既没有必要，在项目被风控时也只是反复撞同一堵墙。
   workflow_dispatch:
     inputs:
       only:
         description: "只部署这些目标（填 deploy-targets.json 里的 name，逗号分隔；留空=全部）"
         required: false
         default: ""
+  release:
+    types: [published]
+  push:
+    tags:
+      - "deploy-*"
 
 # 同一时间只允许一条部署流水线，避免两次 push 交叉覆盖
 concurrency:
@@ -72,6 +77,13 @@ jobs:
 
   deploy:
     name: 部署到 Cloudflare Pages
+    # 最后一道闸：即使 workflow 被别的路径触发（例如有人改了触发条件后 push），
+    # 也只有手动 / Release / deploy-* 标签才真正去调 Cloudflare。
+    # 其余情况整个 job 直接跳过，一个部署请求都不会发出去。
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      github.event_name == 'release' ||
+      startsWith(github.ref, 'refs/tags/deploy-')
     needs: build
     runs-on: ubuntu-latest
     # Environment secret 只有在此处声明同名 environment 时才会注入。

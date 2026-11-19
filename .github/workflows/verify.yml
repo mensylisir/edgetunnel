@@ -4,10 +4,9 @@ permissions:
   contents: read
 
 on:
-  push:
-    branches:
-      - main
+  # 同样不再跟着 main 的每次 push 跑。检查改由 PR 与手动触发承担。
   pull_request:
+  workflow_dispatch:
 
 jobs:
   verify:
